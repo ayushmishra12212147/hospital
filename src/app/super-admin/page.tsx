@@ -18,12 +18,26 @@ type Hospital = {
 
 const getHospitalUrl = (subdomain: string) => {
   if (typeof window === "undefined") return "";
-  const host = window.location.host;
   const protocol = window.location.protocol;
-  const parts = host.split(".");
-  if (parts[parts.length - 1] === "localhost" || parts[0].includes("localhost")) {
-    return `${protocol}//${subdomain}.localhost:${window.location.port || "3000"}`;
+  const hostname = window.location.hostname;
+  const port = window.location.port;
+  const parts = hostname.split(".");
+
+  // Localhost
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) {
+    return `${protocol}//${subdomain}.localhost${port ? `:${port}` : ""}`;
   }
+
+  // Vercel / Netlify platform domains
+  const isVercel = hostname.endsWith(".vercel.app");
+  const isNetlify = hostname.endsWith(".netlify.app");
+
+  if (isVercel || isNetlify) {
+    const baseDomain = parts.slice(-3).join(".");
+    return `${protocol}//${subdomain}.${baseDomain}`;
+  }
+
+  // Custom domains
   const baseDomain = parts.slice(-2).join(".");
   return `${protocol}//${subdomain}.${baseDomain}`;
 };

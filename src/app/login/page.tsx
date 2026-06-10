@@ -43,10 +43,8 @@ function getTenantSubdomain(): string | null {
   const hostname = window.location.hostname;
   const parts = hostname.split(".");
 
-  if (parts.length <= 1) return null;
-
-  // Localhost testing (e.g. apollo.localhost)
-  if (parts[parts.length - 1] === "localhost") {
+  // 1. Localhost handling
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) {
     if (parts.length === 2) {
       const sub = parts[0].toLowerCase();
       if (sub !== "www" && sub !== "admin") return sub;
@@ -54,10 +52,29 @@ function getTenantSubdomain(): string | null {
     return null;
   }
 
-  // Custom domain (e.g. apollo.medflow.com)
+  // 2. Check if we are on a Vercel or Netlify default deployment domain
+  const isVercel = hostname.endsWith(".vercel.app");
+  const isNetlify = hostname.endsWith(".netlify.app");
+
+  if (isVercel || isNetlify) {
+    // For project-name.vercel.app (3 parts), this is the apex, so no tenant.
+    // Tenant subdomains will have 4 or more parts (e.g. tenant-name.project-name.vercel.app).
+    if (parts.length >= 4) {
+      const sub = parts[0].toLowerCase();
+      if (sub !== "www" && sub !== "admin" && sub !== "api" && sub !== "app") {
+        return sub;
+      }
+    }
+    return null;
+  }
+
+  // 3. Custom domain (e.g. apollo.medflow.com)
   if (parts.length >= 3) {
+    if (parts[0].toLowerCase() === "www") {
+      return null;
+    }
     const sub = parts[0].toLowerCase();
-    if (sub !== "www" && sub !== "admin" && sub !== "api" && sub !== "app") {
+    if (sub !== "admin" && sub !== "api" && sub !== "app") {
       return sub;
     }
   }
