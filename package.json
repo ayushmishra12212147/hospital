@@ -4,11 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
-    "postinstall": "prisma generate"
-    
+    "postinstall": "prisma generate",
+    "vercel-build": "rm -rf src/generated && prisma generate && next build"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
