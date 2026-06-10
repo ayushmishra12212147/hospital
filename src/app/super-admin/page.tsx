@@ -116,6 +116,74 @@ export default function SuperAdminPage() {
   const [isLoadingAllUsers, setIsLoadingAllUsers] = useState(false);
   const [userSearch, setUserSearch] = useState("");
 
+  // Super Admin Password Change States
+  const [ownPassword, setOwnPassword] = useState("");
+  const [ownPasswordConfirm, setOwnPasswordConfirm] = useState("");
+  const [isSavingOwnPassword, setIsSavingOwnPassword] = useState(false);
+  const [ownPasswordMsg, setOwnPasswordMsg] = useState("");
+  const [ownPasswordErr, setOwnPasswordErr] = useState("");
+
+  const handleChangeOwnPassword = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!token || !user?.id) return;
+    if (ownPassword !== ownPasswordConfirm) {
+      setOwnPasswordErr("Passwords do not match");
+      return;
+    }
+    setIsSavingOwnPassword(true);
+    setOwnPasswordMsg("");
+    setOwnPasswordErr("");
+    try {
+      const res = await fetch(`/api/users/${user.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ password: ownPassword }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setOwnPasswordErr(data.message);
+      } else {
+        setOwnPasswordMsg("Password updated successfully!");
+        setOwnPassword("");
+        setOwnPasswordConfirm("");
+      }
+    } catch (err) {
+      console.error(err);
+      setOwnPasswordErr("Failed to update password.");
+    } finally {
+      setIsSavingOwnPassword(false);
+    }
+  };
+
+  const handleResetUserPassword = async (userId: string, username: string) => {
+    if (!token) return;
+    const confirmReset = window.confirm(`Are you sure you want to reset the password for "${username}" to the default "ChangeMe@123"?`);
+    if (!confirmReset) return;
+
+    try {
+      const res = await fetch(`/api/users/${userId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ password: "ChangeMe@123" }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`Password for "${username}" has been successfully reset to "ChangeMe@123".`);
+      } else {
+        alert(`Failed to reset password: ${data.message}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to reset password due to connection error.");
+    }
+  };
+
   // Patients global tab state
   const [patients, setPatients] = useState<any[]>([]);
   const [patientSearch, setPatientSearch] = useState("");
@@ -1287,7 +1355,7 @@ export default function SuperAdminPage() {
                                 {u.isActive ? "Active" : "Disabled"}
                               </span>
                             </td>
-                            <td className="px-5 py-4">
+                            <td className="px-5 py-4 flex gap-2">
                               <button
                                 onClick={() => handleToggleUserActive(u)}
                                 className={`text-xs px-3 py-1 border rounded-md font-semibold transition ${
@@ -1297,6 +1365,12 @@ export default function SuperAdminPage() {
                                 }`}
                               >
                                 {u.isActive ? "Disable" : "Enable"}
+                              </button>
+                              <button
+                                onClick={() => handleResetUserPassword(u.id, u.username)}
+                                className="text-xs px-3 py-1 border border-amber-200 bg-amber-50 text-amber-700 rounded-md font-semibold hover:bg-amber-100 transition"
+                              >
+                                Reset Pass
                               </button>
                             </td>
                           </tr>
@@ -1346,6 +1420,51 @@ export default function SuperAdminPage() {
                   <strong>ℹ️ Subdomain Routing Notice:</strong> Actual domain level routing integration is not enabled yet. Tenant workspaces are securely sandboxed inside the database utilizing unique hospital and tenant identifiers. Wildcard subdomains configuration (*.medflow-saas.com) will be deployed in a future release.
                 </div>
               </div>
+            </Surface>
+
+            <Surface title="Account Security" description="Update your Super Admin account password.">
+              <form onSubmit={handleChangeOwnPassword} className="space-y-4 max-w-md">
+                <div>
+                  <label className="block text-sm font-semibold">New Password</label>
+                  <input
+                    type="password"
+                    required
+                    value={ownPassword}
+                    onChange={(e) => setOwnPassword(e.target.value)}
+                    className="mt-2 block w-full h-10 px-3 border border-[#cfd6ca] rounded-md text-sm bg-white outline-none focus:border-[#477063] focus:ring-2"
+                    placeholder="Minimum 6 characters"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold">Confirm New Password</label>
+                  <input
+                    type="password"
+                    required
+                    value={ownPasswordConfirm}
+                    onChange={(e) => setOwnPasswordConfirm(e.target.value)}
+                    className="mt-2 block w-full h-10 px-3 border border-[#cfd6ca] rounded-md text-sm bg-white outline-none focus:border-[#477063] focus:ring-2"
+                    placeholder="Retype password"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={isSavingOwnPassword}
+                  className="h-10 px-6 rounded-md text-sm font-semibold text-white bg-[#2f5d50] hover:bg-[#24483e] transition disabled:opacity-60"
+                >
+                  {isSavingOwnPassword ? "Updating..." : "Update Password"}
+                </button>
+
+                {ownPasswordMsg && (
+                  <div className="rounded bg-[#eef8f1] p-3 text-xs text-[#27603a] font-semibold">
+                    {ownPasswordMsg}
+                  </div>
+                )}
+                {ownPasswordErr && (
+                  <div className="rounded bg-[#fff0ef] p-3 text-xs text-[#9f2d24] font-semibold">
+                    {ownPasswordErr}
+                  </div>
+                )}
+              </form>
             </Surface>
           </div>
         )}

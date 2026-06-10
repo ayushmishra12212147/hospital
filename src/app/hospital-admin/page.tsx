@@ -138,6 +138,74 @@ export default function HospitalAdminPage() {
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState("");
 
+  // Hospital Admin Password Change States
+  const [ownPassword, setOwnPassword] = useState("");
+  const [ownPasswordConfirm, setOwnPasswordConfirm] = useState("");
+  const [isSavingOwnPassword, setIsSavingOwnPassword] = useState(false);
+  const [ownPasswordMsg, setOwnPasswordMsg] = useState("");
+  const [ownPasswordErr, setOwnPasswordErr] = useState("");
+
+  const handleChangeOwnPassword = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!token || !user?.id) return;
+    if (ownPassword !== ownPasswordConfirm) {
+      setOwnPasswordErr("Passwords do not match");
+      return;
+    }
+    setIsSavingOwnPassword(true);
+    setOwnPasswordMsg("");
+    setOwnPasswordErr("");
+    try {
+      const res = await fetch(`/api/users/${user.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ password: ownPassword }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setOwnPasswordErr(data.message);
+      } else {
+        setOwnPasswordMsg("Password updated successfully!");
+        setOwnPassword("");
+        setOwnPasswordConfirm("");
+      }
+    } catch (err) {
+      console.error(err);
+      setOwnPasswordErr("Failed to update password.");
+    } finally {
+      setIsSavingOwnPassword(false);
+    }
+  };
+
+  const handleResetEmployeePassword = async (employeeUserId: string, employeeName: string) => {
+    if (!token) return;
+    const confirmReset = window.confirm(`Are you sure you want to reset the password for "${employeeName}" to the default "ChangeMe@123"?`);
+    if (!confirmReset) return;
+
+    try {
+      const res = await fetch(`/api/users/${employeeUserId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ password: "ChangeMe@123" }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`Password for "${employeeName}" has been successfully reset to "ChangeMe@123".`);
+      } else {
+        alert(`Failed to reset password: ${data.message}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Failed to reset password due to connection error.");
+    }
+  };
+
   // Reports state
   const [activityLogs, setActivityLogs] = useState<any[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
@@ -1158,17 +1226,26 @@ export default function HospitalAdminPage() {
                                 </select>
                               </div>
 
-                              <button
-                                type="button"
-                                onClick={() => handleToggleUserStatus(emp.id, emp.isActive)}
-                                className={`text-xs font-semibold px-3 py-1.5 rounded transition ${
-                                  emp.isActive
-                                    ? "bg-red-50 text-red-600 hover:bg-red-100"
-                                    : "bg-green-50 text-green-600 hover:bg-green-100"
-                                }`}
-                              >
-                                {emp.isActive ? "Deactivate" : "Activate"}
-                              </button>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleResetEmployeePassword(emp.id, emp.employee?.fullName || emp.username)}
+                                  className="text-xs font-semibold px-3 py-1.5 rounded bg-amber-50 text-amber-700 hover:bg-amber-100 transition"
+                                >
+                                  Reset Pass
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleUserStatus(emp.id, emp.isActive)}
+                                  className={`text-xs font-semibold px-3 py-1.5 rounded transition ${
+                                    emp.isActive
+                                      ? "bg-red-50 text-red-600 hover:bg-red-100"
+                                      : "bg-green-50 text-green-600 hover:bg-green-100"
+                                  }`}
+                                >
+                                  {emp.isActive ? "Deactivate" : "Activate"}
+                                </button>
+                              </div>
                             </div>
                           </div>
                         );
@@ -1442,6 +1519,51 @@ export default function HospitalAdminPage() {
                 {settingsMsg && (
                   <div className="rounded-md bg-[#eef8f1] p-3 text-sm text-[#27603a]">
                     {settingsMsg}
+                  </div>
+                )}
+              </form>
+            </Surface>
+
+            <Surface title="Account Security" description="Update your own login password.">
+              <form onSubmit={handleChangeOwnPassword} className="space-y-4 max-w-md">
+                <div>
+                  <label className="block text-sm font-semibold">New Password</label>
+                  <input
+                    type="password"
+                    required
+                    value={ownPassword}
+                    onChange={(e) => setOwnPassword(e.target.value)}
+                    className="mt-2 block w-full h-10 px-3 border border-[#cfd6ca] rounded-md text-sm bg-white outline-none focus:border-[#477063] focus:ring-2 focus:ring-[#477063]/20 transition"
+                    placeholder="Minimum 6 characters"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold">Confirm New Password</label>
+                  <input
+                    type="password"
+                    required
+                    value={ownPasswordConfirm}
+                    onChange={(e) => setOwnPasswordConfirm(e.target.value)}
+                    className="mt-2 block w-full h-10 px-3 border border-[#cfd6ca] rounded-md text-sm bg-white outline-none focus:border-[#477063] focus:ring-2 focus:ring-[#477063]/20 transition"
+                    placeholder="Retype password"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={isSavingOwnPassword}
+                  className="h-10 px-6 rounded-md text-sm font-semibold text-white bg-[#2f5d50] hover:bg-[#24483e] transition disabled:opacity-60"
+                >
+                  {isSavingOwnPassword ? "Updating..." : "Update Password"}
+                </button>
+
+                {ownPasswordMsg && (
+                  <div className="rounded-md bg-[#eef8f1] p-3 text-sm text-[#27603a] font-semibold">
+                    {ownPasswordMsg}
+                  </div>
+                )}
+                {ownPasswordErr && (
+                  <div className="rounded-md bg-[#fff0ef] p-3 text-sm text-[#9f2d24] font-semibold">
+                    {ownPasswordErr}
                   </div>
                 )}
               </form>
