@@ -1,6 +1,6 @@
 import { randomBytes, createHash } from "crypto";
 
-import { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 export function generateSecureToken() {
