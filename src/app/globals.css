@@ -24,3 +24,52 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@media print {
+  body {
+    background: white;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  [data-print-section="opd-summary"],
+  [data-print-section="opd-summary"] *,
+  [data-print-section="bill-summary"],
+  [data-print-section="bill-summary"] *,
+  [data-print-section="lab-summary"],
+  [data-print-section="lab-summary"] *,
+  [data-print-section="radiology-summary"],
+  [data-print-section="radiology-summary"] * {
+    visibility: visible !important;
+  }
+
+  [data-print-section="opd-summary"] {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+
+  [data-print-section="bill-summary"] {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+
+  [data-print-section="lab-summary"] {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+
+  [data-print-section="radiology-summary"] {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+}

@@ -1,0 +1,5 @@
+-- CreateEnum
+CREATE TYPE "UserType" AS ENUM ('SUPER_ADMIN', 'HOSPITAL_USER');
+
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN     "userType" "UserType" NOT NULL DEFAULT 'HOSPITAL_USER';

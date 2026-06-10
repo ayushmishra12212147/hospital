@@ -1,0 +1,679 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserType {
+  SUPER_ADMIN
+  HOSPITAL_USER
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum BloodGroup {
+  A_POSITIVE
+  A_NEGATIVE
+
+  B_POSITIVE
+  B_NEGATIVE
+
+  AB_POSITIVE
+  AB_NEGATIVE
+
+  O_POSITIVE
+  O_NEGATIVE
+}
+
+enum MaritalStatus {
+  SINGLE
+  MARRIED
+  DIVORCED
+  WIDOWED
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CHECKED_IN
+  IN_CONSULTATION
+  COMPLETED
+  CANCELLED
+}
+
+enum OpdVisitStatus {
+  OPEN
+  COMPLETED
+  CANCELLED
+}
+
+enum BillStatus {
+  DRAFT
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  UPI
+  BANK_TRANSFER
+  INSURANCE
+  OTHER
+}
+
+enum LabOrderStatus {
+  REQUESTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum LabPriority {
+  ROUTINE
+  URGENT
+  STAT
+}
+
+enum RadiologyOrderStatus {
+  REQUESTED
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+model Hospital {
+  id String @id @default(cuid())
+
+  name      String
+  subdomain String  @unique
+  status    Boolean @default(true)
+  logo      String?
+  loginImage1 String?
+  loginImage2 String?
+  loginImage3 String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  modules   HospitalModule[]
+  users     User[]
+  employees Employee[]
+  roles     Role[]
+
+  patients     Patient[]
+  appointments Appointment[]
+  opdVisits    OpdVisit[]
+  vitals       Vital[]
+  bills        Bill[]
+  labOrders    LabOrder[]
+  radiologyOrders RadiologyOrder[]
+}
+
+model HospitalModule {
+  id String @id @default(cuid())
+
+  hospitalId String
+  moduleId   String
+
+  enabled Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+
+  module Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([hospitalId, moduleId])
+}
+
+model Module {
+  id String @id @default(cuid())
+
+  code String @unique
+  name String
+
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hospitals HospitalModule[]
+}
+
+model User {
+  id String @id @default(cuid())
+
+  hospitalId String?
+
+  username String @unique
+  password String
+
+  userType UserType @default(HOSPITAL_USER)
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hospital Hospital? @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+
+  employee Employee?
+
+  roles UserRole[]
+}
+
+model Employee {
+  id String @id @default(cuid())
+
+  hospitalId String
+
+  userId String @unique
+
+  employeeCode String
+
+  fullName String
+
+  phone String?
+
+  designation String
+
+  department String?
+
+  joiningDate DateTime?
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+
+  user         User          @relation(fields: [userId], references: [id])
+  appointments Appointment[]
+  labOrdersRequested LabOrder[]
+  radiologyOrdersRequested RadiologyOrder[]
+
+  @@unique([hospitalId, employeeCode])
+}
+
+model Role {
+  id String @id @default(cuid())
+
+  hospitalId String
+
+  name String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@unique([hospitalId, name])
+}
+
+model Permission {
+  id String @id @default(cuid())
+
+  code String @unique
+
+  description String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  roles RolePermission[]
+}
+
+model UserRole {
+  userId String
+  roleId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+}
+
+model RolePermission {
+  roleId String
+
+  permissionId String
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model Patient {
+  id String @id @default(cuid())
+
+  hospitalId String
+
+  patientCode String
+
+  firstName  String
+  middleName String?
+  lastName   String?
+
+  gender Gender
+
+  dateOfBirth DateTime?
+
+  phone String?
+  email String?
+
+  bloodGroup BloodGroup?
+
+  maritalStatus MaritalStatus?
+
+  occupation String?
+
+  nationality String?
+
+  aadhaarNumber String?
+
+  address String?
+
+  city    String?
+  state   String?
+  country String?
+  pincode String?
+
+  emergencyName     String?
+  emergencyPhone    String?
+  emergencyRelation String?
+
+  allergies String?
+
+  remarks String?
+
+  isActive Boolean @default(true)
+
+  createdAt        DateTime @default(now())
+  registrationDate DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+
+  appointments Appointment[]
+  opdVisits    OpdVisit[]
+  vitals       Vital[]
+  bills        Bill[]
+  labOrders    LabOrder[]
+  radiologyOrders RadiologyOrder[]
+
+  @@unique([hospitalId, patientCode])
+  @@index([hospitalId])
+  @@index([phone])
+}
+
+model Appointment {
+  id            String            @id @default(cuid())
+  hospitalId    String
+  patientId     String
+  doctorId      String?
+  appointmentNo String
+  appointmentAt DateTime
+  status        AppointmentStatus
+  notes         String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  patient       Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  hospital      Hospital          @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  doctor        Employee?         @relation(fields: [doctorId], references: [id])
+  opdVisit      OpdVisit?
+
+  @@unique([hospitalId, appointmentNo])
+  @@index([hospitalId])
+  @@index([patientId])
+  @@index([doctorId])
+  @@index([appointmentAt])
+}
+
+model OpdVisit {
+  id String @id @default(cuid())
+
+  hospitalId    String
+  patientId     String
+  appointmentId String? @unique
+
+  visitNo String
+
+  chiefComplaint String?
+  diagnosis      String?
+  clinicalNotes  String?
+  treatmentPlan  String?
+
+  status OpdVisitStatus @default(OPEN)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hospital    Hospital     @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  patient     Patient      @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  appointment Appointment? @relation(fields: [appointmentId], references: [id])
+
+  vitals       Vital?
+  prescription Prescription?
+  bills        Bill[]
+  labOrders    LabOrder[]
+  radiologyOrders RadiologyOrder[]
+
+  @@unique([hospitalId, visitNo])
+  @@index([hospitalId])
+  @@index([patientId])
+  @@index([appointmentId])
+}
+
+model Vital {
+  id String @id @default(cuid())
+
+  hospitalId String
+  patientId  String
+  visitId    String @unique
+
+  temperature     String?
+  pulse           Int?
+  respiratoryRate Int?
+  bloodPressure   String?
+  oxygenSaturation Int?
+  height          String?
+  weight          String?
+  bmi             String?
+
+  recordedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  patient  Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  visit    OpdVisit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+
+  @@index([hospitalId])
+  @@index([patientId])
+}
+
+model Prescription {
+  id String @id @default(cuid())
+
+  visitId String @unique
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  visit OpdVisit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  items PrescriptionItem[]
+}
+
+model PrescriptionItem {
+  id String @id @default(cuid())
+
+  prescriptionId String
+
+  medicineName String
+  dosage       String?
+  frequency    String?
+  duration     String?
+  instructions String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  prescription Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+
+  @@index([prescriptionId])
+}
+
+model Bill {
+  id String @id @default(cuid())
+
+  hospitalId String
+  patientId  String
+  opdVisitId String?
+
+  billNo String
+
+  billDate DateTime @default(now())
+  status   BillStatus @default(UNPAID)
+
+  subtotal      Decimal @db.Decimal(10, 2)
+  discount      Decimal @db.Decimal(10, 2) @default(0)
+  tax           Decimal @db.Decimal(10, 2) @default(0)
+  totalAmount   Decimal @db.Decimal(10, 2)
+  paidAmount    Decimal @db.Decimal(10, 2) @default(0)
+  balanceAmount Decimal @db.Decimal(10, 2)
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  patient  Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  opdVisit OpdVisit? @relation(fields: [opdVisitId], references: [id], onDelete: SetNull)
+
+  items    BillItem[]
+  payments BillPayment[]
+
+  @@unique([hospitalId, billNo])
+  @@index([hospitalId])
+  @@index([patientId])
+  @@index([opdVisitId])
+}
+
+model LabOrder {
+  id String @id @default(cuid())
+
+  hospitalId String
+  patientId  String
+  opdVisitId String?
+  requestedByEmployeeId String?
+
+  orderNo String
+  status  LabOrderStatus @default(REQUESTED)
+  priority LabPriority @default(ROUTINE)
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  patient  Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  opdVisit OpdVisit? @relation(fields: [opdVisitId], references: [id], onDelete: SetNull)
+  requestedBy Employee? @relation(fields: [requestedByEmployeeId], references: [id], onDelete: SetNull)
+
+  items LabOrderItem[]
+
+  @@unique([hospitalId, orderNo])
+  @@index([hospitalId])
+  @@index([patientId])
+  @@index([opdVisitId])
+  @@index([requestedByEmployeeId])
+}
+
+model LabOrderItem {
+  id String @id @default(cuid())
+
+  labOrderId String
+
+  testName String
+  specimenType String?
+  resultValue String?
+  unit String?
+  referenceRange String?
+  remarks String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  labOrder LabOrder @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
+
+  @@index([labOrderId])
+}
+
+model RadiologyOrder {
+  id String @id @default(cuid())
+
+  hospitalId String
+  patientId  String
+  opdVisitId String?
+  requestedByEmployeeId String?
+
+  orderNo String
+  status  RadiologyOrderStatus @default(REQUESTED)
+  priority LabPriority @default(ROUTINE)
+
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  patient  Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  opdVisit OpdVisit? @relation(fields: [opdVisitId], references: [id], onDelete: SetNull)
+  requestedBy Employee? @relation(fields: [requestedByEmployeeId], references: [id], onDelete: SetNull)
+
+  items RadiologyOrderItem[]
+
+  @@unique([hospitalId, orderNo])
+  @@index([hospitalId])
+  @@index([patientId])
+  @@index([opdVisitId])
+  @@index([requestedByEmployeeId])
+}
+
+model RadiologyOrderItem {
+  id String @id @default(cuid())
+
+  radiologyOrderId String
+
+  procedureName String
+  bodyPart String?
+  laterality String?
+  findings String?
+  remarks String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  radiologyOrder RadiologyOrder @relation(fields: [radiologyOrderId], references: [id], onDelete: Cascade)
+
+  @@index([radiologyOrderId])
+}
+
+model BillItem {
+  id String @id @default(cuid())
+
+  billId String
+
+  description String
+  quantity    Int
+  unitPrice   Decimal @db.Decimal(10, 2)
+  amount      Decimal @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bill Bill @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  @@index([billId])
+}
+
+model BillPayment {
+  id String @id @default(cuid())
+
+  billId String
+
+  amount Decimal @db.Decimal(10, 2)
+  method PaymentMethod
+  referenceNo String?
+  notes String?
+  paidAt DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bill Bill @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  @@index([billId])
+}
+
+model RefreshToken {
+  id String @id @default(cuid())
+
+  userId String
+  tokenHash String @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PasswordResetToken {
+  id String @id @default(cuid())
+
+  userId String
+  tokenHash String @unique
+  expiresAt DateTime
+  usedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id String @id @default(cuid())
+
+  hospitalId String?
+  actorUserId String?
+  action String
+  entityType String
+  entityId String?
+  metadata Json?
+  ipAddress String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  @@index([hospitalId])
+  @@index([actorUserId])
+  @@index([entityType, entityId])
+}
+
+model ActivityLog {
+  id String @id @default(cuid())
+
+  hospitalId String?
+  actorUserId String?
+  category String
+  title String
+  details String?
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([hospitalId])
+  @@index([actorUserId])
+  @@index([category])
+}
