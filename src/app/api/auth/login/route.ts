@@ -85,14 +85,13 @@ export async function POST(
 
     if (error instanceof ZodError) {
       return failure(
-        error.issues[0]?.message ??
-          "Validation failed",
+        error.issues[0]?.message ?? "Validation failed",
         400
       );
     }
 
     return failure(
-      "Internal server error",
+      `Internal server error: ${(error as any).message || String(error)}`,
       500
     );
   }

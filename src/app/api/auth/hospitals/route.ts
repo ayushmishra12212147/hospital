@@ -31,8 +31,8 @@ export async function GET(request: NextRequest) {
     });
 
     return success(hospital ? [hospital] : []);
-  } catch (error) {
+  } catch (error: any) {
     console.error(error);
-    return failure("Failed to fetch hospitals", 500);
+    return failure(`Failed to fetch hospitals: ${error.message || String(error)}`, 500);
   }
 }
