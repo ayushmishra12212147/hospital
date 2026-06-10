@@ -295,13 +295,12 @@ export default function LoginPage() {
               : "Access Your Facility Workspace"}
           </h1>
 
-          {/* Subheading details */}
           <p className="text-sm lg:text-base text-[#bfd7c9] leading-relaxed max-w-md drop-shadow-sm">
             {isSuperAdminPortal
               ? "Access the system-wide platform dashboard to create hospital tenants, manage global subscriptions, toggle SaaS operational modules, and review audit trails."
               : resolvedHospital
               ? "Welcome to the facility portal. Log in to access the Clinical Registry, OP/IP Operations, Radiology/Lab Workbenches, Financial Bills, and Admin settings."
-              : "Enter your hospital's subdomain prefix to customize your workspace view, load clinical layouts, and log in to your specialized dashboard."}
+              : "Enter your login credentials below to access your workspace directly, or resolve your custom subdomain workspace to customize your brand branding."}
           </p>
         </div>
 
@@ -402,87 +401,78 @@ export default function LoginPage() {
             </div>
           )}
 
-          {/* Subdomain locked indicator (if subdomain matches hostname URL) */}
-          {isSubdomainLocked && resolvedHospital && (
+          {/* Subdomain locked indicator (if subdomain matches hostname URL or is resolved) */}
+          {((isSubdomainLocked && resolvedHospital) || resolvedHospital) && !isSuperAdminPortal && (
             <div className="bg-[#f3f5f0] border border-[#d8ddd3] rounded-lg p-3 text-xs text-[#2f5d50] flex items-center justify-between">
               <div>
                 <span className="font-bold">Hospital Workspace:</span> {resolvedHospital.name}
               </div>
-              <span className="bg-green-100 text-green-800 text-[10px] font-bold px-2 py-0.5 rounded">Locked URL</span>
+              <span className="bg-green-100 text-green-800 text-[10px] font-bold px-2 py-0.5 rounded">
+                {isSubdomainLocked ? "Locked URL" : "Resolved"}
+              </span>
             </div>
           )}
 
-          {/* Credentials Inputs (Rendered if we are in Super Admin mode OR if a hospital is successfully resolved) */}
-          {(isSuperAdminPortal || resolvedHospital) ? (
-            <form onSubmit={handleLogin} className="space-y-5">
-              {/* Username Input */}
-              <div>
-                <label htmlFor="username" className="block text-xs font-bold uppercase tracking-wider text-[#626a62]">
-                  Username
-                </label>
-                <div className="mt-2">
-                  <input
-                    id="username"
-                    name="username"
-                    type="text"
-                    required
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    className="block w-full h-11 rounded-md border border-[#cfd6ca] bg-white px-3 py-2 text-sm outline-none focus:border-[#477063] focus:ring-2 focus:ring-[#477063]/20 transition"
-                    placeholder={isSuperAdminPortal ? "Enter admin username" : `Username for ${resolvedHospital?.name}`}
-                    autoComplete="username"
-                  />
-                </div>
+          {/* Credentials Inputs (Always Rendered) */}
+          <form onSubmit={handleLogin} className="space-y-5">
+            {/* Username Input */}
+            <div>
+              <label htmlFor="username" className="block text-xs font-bold uppercase tracking-wider text-[#626a62]">
+                Username
+              </label>
+              <div className="mt-2">
+                <input
+                  id="username"
+                  name="username"
+                  type="text"
+                  required
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  className="block w-full h-11 rounded-md border border-[#cfd6ca] bg-white px-3 py-2 text-sm outline-none focus:border-[#477063] focus:ring-2 focus:ring-[#477063]/20 transition"
+                  placeholder={isSuperAdminPortal ? "Enter admin username" : resolvedHospital ? `Username for ${resolvedHospital.name}` : "Enter your username"}
+                  autoComplete="username"
+                />
               </div>
+            </div>
 
-              {/* Password Input */}
-              <div>
-                <label htmlFor="password" className="block text-xs font-bold uppercase tracking-wider text-[#626a62]">
-                  Password
-                </label>
-                <div className="mt-2">
-                  <input
-                    id="password"
-                    name="password"
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="block w-full h-11 rounded-md border border-[#cfd6ca] bg-white px-3 py-2 text-sm outline-none focus:border-[#477063] focus:ring-2 focus:ring-[#477063]/20 transition"
-                    placeholder="••••••••"
-                    autoComplete="current-password"
-                  />
-                </div>
+            {/* Password Input */}
+            <div>
+              <label htmlFor="password" className="block text-xs font-bold uppercase tracking-wider text-[#626a62]">
+                Password
+              </label>
+              <div className="mt-2">
+                <input
+                  id="password"
+                  name="password"
+                  type="password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="block w-full h-11 rounded-md border border-[#cfd6ca] bg-white px-3 py-2 text-sm outline-none focus:border-[#477063] focus:ring-2 focus:ring-[#477063]/20 transition"
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                />
               </div>
+            </div>
 
-              {/* Error messaging */}
-              {loginError && (
-                <div className="rounded-md bg-[#fff0ef] p-3 text-xs text-[#9f2d24] border border-[#fcdad7]">
-                  {loginError}
-                </div>
-              )}
+            {/* Error messaging */}
+            {loginError && (
+              <div className="rounded-md bg-[#fff0ef] p-3 text-xs text-[#9f2d24] border border-[#fcdad7]">
+                {loginError}
+              </div>
+            )}
 
-              {/* Submit Button */}
-              <div>
-                <button
-                  type="submit"
-                  disabled={isLoggingIn}
-                  className="w-full h-11 flex justify-center items-center rounded-md text-sm font-semibold text-white bg-[#2f5d50] hover:bg-[#24483e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#477063] disabled:cursor-not-allowed disabled:opacity-60 transition"
-                >
-                  {isLoggingIn ? "Authenticating Session..." : "Secure Sign In"}
-                </button>
-              </div>
-            </form>
-          ) : (
-            // Prompt helper if no workspace resolved yet
-            !isSuperAdminPortal ? (
-              <div className="border border-[#dfe4d9] rounded-lg p-6 bg-[#fafaf9] text-center">
-                <p className="text-xs text-[#626a62]">
-                  To log in to your hospital workspace, enter its prefix subdomain (e.g. <span className="font-semibold">apollo-delhi</span>) and click <span className="font-semibold">Resolve</span>.
-                </p>
-              </div>
-            ) : null
-          )}
+            {/* Submit Button */}
+            <div>
+              <button
+                type="submit"
+                disabled={isLoggingIn}
+                className="w-full h-11 flex justify-center items-center rounded-md text-sm font-semibold text-white bg-[#2f5d50] hover:bg-[#24483e] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#477063] disabled:cursor-not-allowed disabled:opacity-60 transition"
+              >
+                {isLoggingIn ? "Authenticating Session..." : "Secure Sign In"}
+              </button>
+            </div>
+          </form>
         </div>
       </section>
     </main>
