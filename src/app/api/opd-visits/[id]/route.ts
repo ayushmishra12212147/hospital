@@ -204,7 +204,11 @@ export async function PATCH(
                 await tx.prescriptionItem.createMany({
                   data: body.prescriptionItems.map(
                     (item) => ({
-                      ...item,
+                      medicineName: item.medicineName,
+                      dosage: item.dosage ?? null,
+                      frequency: item.frequency ?? null,
+                      duration: item.duration ?? null,
+                      instructions: item.instructions ?? null,
                       prescriptionId:
                         prescription.id,
                     })
@@ -246,7 +250,7 @@ export async function PATCH(
     }
 
     return failure(
-      "Failed to update OPD visit",
+      `Failed to update OPD visit: ${error instanceof Error ? error.message : String(error)}`,
       500
     );
   }
