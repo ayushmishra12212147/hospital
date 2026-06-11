@@ -130,6 +130,15 @@ export default function SuperAdminPage() {
   const [isLoadingAllUsers, setIsLoadingAllUsers] = useState(false);
   const [userSearch, setUserSearch] = useState("");
 
+  // Audit Logs tab state
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [activityLogs, setActivityLogs] = useState<any[]>([]);
+  const [logSubTab, setLogSubTab] = useState<"audit" | "activity">("audit");
+  const [logFilterHospitalId, setLogFilterHospitalId] = useState("");
+  const [logPage, setLogPage] = useState(1);
+  const [logPagination, setLogPagination] = useState<any>({ page: 1, limit: 20, total: 0, totalPages: 1 });
+  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+
   // Super Admin Password Change States
   const [ownPassword, setOwnPassword] = useState("");
   const [ownPasswordConfirm, setOwnPasswordConfirm] = useState("");
@@ -350,6 +359,42 @@ export default function SuperAdminPage() {
   }, [token, fetchStats, fetchHospitals, fetchModuleCatalog]);
 
   // Handle Tab Switch
+  // Fetch Audit/Activity Logs
+  const fetchLogs = useCallback(async (authToken: string, subTab: "audit" | "activity" = "audit", hospId = "", pageNum = 1) => {
+    setIsLoadingLogs(true);
+    try {
+      const endpoint = subTab === "audit" ? "/api/audit-logs" : "/api/activity-logs";
+      const params = new URLSearchParams({
+        page: String(pageNum),
+        limit: "20",
+        ...(hospId ? { hospitalId: hospId } : {}),
+      });
+      const res = await fetch(`${endpoint}?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (subTab === "audit") {
+          setAuditLogs(data.data.auditLogs);
+        } else {
+          setActivityLogs(data.data.activityLogs);
+        }
+        setLogPagination(data.data.pagination);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoadingLogs(false);
+    }
+  }, []);
+
+  // Sync effect to reload logs when filters change
+  useEffect(() => {
+    if (token && activeTab === "logs") {
+      fetchLogs(token, logSubTab, logFilterHospitalId, logPage);
+    }
+  }, [token, activeTab, logSubTab, logFilterHospitalId, logPage, fetchLogs]);
+
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
     setHospitalMsg("");
@@ -686,6 +731,7 @@ export default function SuperAdminPage() {
               { id: "modules", label: "System Modules" },
               { id: "patients", label: "Patients Directory" },
               { id: "users", label: "Platform Users" },
+              { id: "logs", label: "Audit Logs" },
               { id: "settings", label: "Settings" },
             ].map((tab) => (
               <button
@@ -1391,6 +1437,178 @@ export default function SuperAdminPage() {
                         ))}
                     </tbody>
                   </table>
+                </div>
+              )}
+            </Surface>
+          </div>
+        )}
+
+        {/* Tab: Audit Logs */}
+        {activeTab === "logs" && (
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-2xl font-bold text-[#151917]">Audit & Activity Logs</h2>
+              <p className="text-sm text-[#626a62] mt-1">
+                Monitor all system events and user activities across the platform.
+              </p>
+            </div>
+
+            {/* Sub-tab toggle + filters */}
+            <div className="flex flex-wrap gap-4 items-center justify-between">
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { setLogSubTab("audit"); setLogPage(1); }}
+                  className={`h-9 px-4 text-sm font-semibold rounded-md transition ${
+                    logSubTab === "audit"
+                      ? "bg-[#2f5d50] text-white"
+                      : "bg-white text-[#626a62] border border-[#cfd6ca] hover:bg-[#f3f5f0]"
+                  }`}
+                >
+                  Audit Logs
+                </button>
+                <button
+                  onClick={() => { setLogSubTab("activity"); setLogPage(1); }}
+                  className={`h-9 px-4 text-sm font-semibold rounded-md transition ${
+                    logSubTab === "activity"
+                      ? "bg-[#2f5d50] text-white"
+                      : "bg-white text-[#626a62] border border-[#cfd6ca] hover:bg-[#f3f5f0]"
+                  }`}
+                >
+                  Activity Logs
+                </button>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <select
+                  value={logFilterHospitalId}
+                  onChange={(e) => {
+                    setLogFilterHospitalId(e.target.value);
+                    setLogPage(1);
+                  }}
+                  className="h-9 min-w-64 rounded-md border border-[#cfd6ca] bg-white px-3 text-sm outline-none focus:border-[#477063] focus:ring-2 focus:ring-[#477063]/20"
+                >
+                  <option value="">All Hospitals</option>
+                  {hospitals.map((h) => (
+                    <option key={h.id} value={h.id}>
+                      {h.name}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="text-xs text-[#626a62] font-semibold bg-[#eef3eb] px-3 py-1.5 rounded-md border border-[#d2edd9]">
+                  Total: {logPagination.total}
+                </div>
+              </div>
+            </div>
+
+            <Surface title={logSubTab === "audit" ? "System Audit Trail" : "Activity Feed"}>
+              {isLoadingLogs ? (
+                <div className="text-center py-8 text-[#626a62]">Loading logs...</div>
+              ) : (logSubTab === "audit" ? auditLogs : activityLogs).length === 0 ? (
+                <p className="text-center py-8 text-[#626a62]">No log entries found for the selected filters.</p>
+              ) : logSubTab === "audit" ? (
+                <div className="space-y-4">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm border-collapse">
+                      <thead className="bg-[#f3f5f0] text-xs uppercase tracking-wider text-[#626a62]">
+                        <tr>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Timestamp</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Action</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Entity</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Entity ID</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Hospital</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Actor</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">IP</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {auditLogs.map((log) => {
+                          const logHospital = hospitals.find(h => h.id === log.hospitalId);
+                          return (
+                            <tr key={log.id} className="border-b border-[#edf0e9] hover:bg-[#fcfdfc] transition">
+                              <td className="px-4 py-3 text-xs text-[#626a62] whitespace-nowrap">
+                                {new Date(log.createdAt).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className="text-xs font-semibold px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                                  {log.action}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-xs font-medium">{log.entityType}</td>
+                              <td className="px-4 py-3 text-xs font-mono text-[#626a62]">{log.entityId ? log.entityId.slice(0, 8) + "..." : "—"}</td>
+                              <td className="px-4 py-3 text-xs">{logHospital?.name || "Platform"}</td>
+                              <td className="px-4 py-3 text-xs font-mono text-[#626a62]">{log.actorUserId ? log.actorUserId.slice(0, 8) + "..." : "System"}</td>
+                              <td className="px-4 py-3 text-xs text-[#626a62]">{log.ipAddress || "—"}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm border-collapse">
+                      <thead className="bg-[#f3f5f0] text-xs uppercase tracking-wider text-[#626a62]">
+                        <tr>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Timestamp</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Category</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Title</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Details</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Hospital</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Actor</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {activityLogs.map((log) => {
+                          const logHospital = hospitals.find(h => h.id === log.hospitalId);
+                          return (
+                            <tr key={log.id} className="border-b border-[#edf0e9] hover:bg-[#fcfdfc] transition">
+                              <td className="px-4 py-3 text-xs text-[#626a62] whitespace-nowrap">
+                                {new Date(log.createdAt).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className="text-xs font-semibold px-2 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">
+                                  {log.category}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-sm font-medium">{log.title}</td>
+                              <td className="px-4 py-3 text-xs text-[#626a62] max-w-xs truncate">{log.details || "—"}</td>
+                              <td className="px-4 py-3 text-xs">{logHospital?.name || "Platform"}</td>
+                              <td className="px-4 py-3 text-xs font-mono text-[#626a62]">{log.actorUserId ? log.actorUserId.slice(0, 8) + "..." : "System"}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Pagination */}
+              {(logSubTab === "audit" ? auditLogs : activityLogs).length > 0 && (
+                <div className="flex items-center justify-between pt-4 mt-4 border-t border-[#dfe4d9]">
+                  <div className="text-xs text-[#626a62]">
+                    Page <span className="font-semibold text-[#20231f]">{logPagination.page}</span> of{" "}
+                    <span className="font-semibold text-[#20231f]">{logPagination.totalPages}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setLogPage(p => Math.max(p - 1, 1))}
+                      disabled={logPage <= 1}
+                      className="h-8 px-3 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => setLogPage(p => Math.min(p + 1, logPagination.totalPages))}
+                      disabled={logPage >= logPagination.totalPages}
+                      className="h-8 px-3 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                    >
+                      Next
+                    </button>
+                  </div>
                 </div>
               )}
             </Surface>

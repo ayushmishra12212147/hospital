@@ -823,7 +823,7 @@ export default function HospitalAdminPage() {
                   { label: "Total Patients Registered", val: stats?.totalPatients ?? 0 },
                   { label: "Active Doctors", val: stats?.doctorCount ?? 0 },
                   { label: "Total Staff Directory", val: stats?.totalEmployees ?? 0 },
-                  { label: "Revenue Collected Today", val: `$${stats?.revenueToday ?? 0}` },
+                  { label: "Revenue Collected Today", val: `₹${stats?.revenueToday ?? 0}` },
                   { label: "Pending Bills Queue", val: stats?.pendingBillsCount ?? 0 },
                 ].map((card, i) => (
                   <div
