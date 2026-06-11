@@ -20,14 +20,14 @@ export const opdVisitStatusSchema = z.enum([
 ]);
 
 export const vitalSchema = z.object({
-  temperature: optionalText,
-  pulse: optionalInt,
-  respiratoryRate: optionalInt,
-  bloodPressure: optionalText,
-  oxygenSaturation: optionalInt,
-  height: optionalText,
-  weight: optionalText,
-  bmi: optionalText,
+  temperature: z.string().trim().optional().nullable().transform((v) => v || undefined),
+  pulse: z.coerce.number().int().optional().nullable(),
+  respiratoryRate: z.coerce.number().int().optional().nullable(),
+  bloodPressure: z.string().trim().optional().nullable().transform((v) => v || undefined),
+  oxygenSaturation: z.coerce.number().int().optional().nullable(),
+  height: z.string().trim().optional().nullable().transform((v) => v || undefined),
+  weight: z.string().trim().optional().nullable().transform((v) => v || undefined),
+  bmi: z.string().trim().optional().nullable().transform((v) => v || undefined),
 });
 
 export const prescriptionItemSchema = z.object({

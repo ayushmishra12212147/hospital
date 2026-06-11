@@ -98,6 +98,7 @@ export default function HospitalAdminPage() {
 
   // Nav state
   const [activeTab, setActiveTab] = useState("dashboard"); // dashboard, patients, appointments, employees, user-accounts, roles, reports, settings
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Modules visibility
   const [enabledModules, setEnabledModules] = useState<string[]>([]);
@@ -438,6 +439,7 @@ export default function HospitalAdminPage() {
   // Handle Tab Switch
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
+    setIsMobileMenuOpen(false);
     setEmployeeMsg("");
     setEmployeeErr("");
     setLoginMsg("");
@@ -748,15 +750,51 @@ export default function HospitalAdminPage() {
   const pendingEmployees = employees.filter((emp) => emp.username.startsWith("pending_emp_"));
 
   return (
-    <main className="min-h-screen bg-[#f7f7f4] text-[#20231f] flex">
+    <main className="min-h-screen bg-[#f7f7f4] text-[#20231f] flex flex-col md:flex-row">
+      {/* Mobile Sidebar Backdrop */}
+      {isMobileMenuOpen && (
+        <div
+          onClick={() => setIsMobileMenuOpen(false)}
+          className="fixed inset-0 z-30 bg-black/40 md:hidden"
+        />
+      )}
+
+      {/* Mobile Top Header Bar */}
+      <div className="md:hidden bg-white border-b border-[#dfe4d9] px-4 py-3 flex items-center justify-between sticky top-0 z-30 w-full">
+        <div className="flex items-center gap-2">
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#477063]">
+            MedFlow Admin
+          </p>
+        </div>
+        <button
+          onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+          className="p-1 text-[#20231f] focus:outline-none"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+          </svg>
+        </button>
+      </div>
+
       {/* Sidebar */}
-      <aside className="w-64 border-r border-[#dfe4d9] bg-white flex flex-col justify-between">
+      <aside className={`
+        fixed md:static inset-y-0 left-0 z-40 w-64 border-r border-[#dfe4d9] bg-white flex flex-col justify-between transition-transform duration-300
+        ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
+      `}>
         <div>
-          <div className="p-6 border-b border-[#dfe4d9]">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#477063]">
-              Operations Portal
-            </p>
-            <h1 className="text-xl font-bold mt-1 text-[#151917] truncate">{hospitalName || "Hospital Admin"}</h1>
+          <div className="p-6 border-b border-[#dfe4d9] flex justify-between items-center">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#477063]">
+                Operations Portal
+              </p>
+              <h1 className="text-xl font-bold mt-1 text-[#151917] truncate">{hospitalName || "Hospital Admin"}</h1>
+            </div>
+            <button
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="md:hidden p-1 text-[#626a62] hover:text-red-500 font-bold"
+            >
+              ✕
+            </button>
           </div>
 
           <nav className="p-4 space-y-1">
@@ -803,7 +841,7 @@ export default function HospitalAdminPage() {
       </aside>
 
       {/* Content area */}
-      <section className="flex-1 p-8 overflow-y-auto max-w-7xl mx-auto w-full">
+      <section className="flex-1 p-4 md:p-8 overflow-y-auto max-w-7xl mx-auto w-full">
         {/* Tab 1: Dashboard */}
         {activeTab === "dashboard" && (
           <div className="space-y-6">

@@ -171,6 +171,8 @@ export default function EmployeePage() {
   const [token, setToken] = useState("");
   const [user, setUser] = useState<any>(null);
   const [hospitalId, setHospitalId] = useState("");
+  const [hospitalName, setHospitalName] = useState("");
+  const [hospitalLogo, setHospitalLogo] = useState("");
 
   // Role detection
   const [role, setRole] = useState<"receptionist" | "doctor" | "accountant" | "lab_technician" | "unknown">("unknown");
@@ -180,6 +182,12 @@ export default function EmployeePage() {
 
   // Navigation tab
   const [activeTab, setActiveTab] = useState("dashboard"); // dashboard, patients, appointments, billing, lab, radiology
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    setIsMobileMenuOpen(false);
+  };
 
   // Common operational state
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -201,17 +209,27 @@ export default function EmployeePage() {
   const [appointmentPage, setAppointmentPage] = useState(1);
   const [appointmentPagination, setAppointmentPagination] = useState<Pagination>({ page: 1, limit: 10, total: 0, totalPages: 1 });
   const [isLoadingAppointments, setIsLoadingAppointments] = useState(false);
+  const [debouncedPatientSearch, setDebouncedPatientSearch] = useState("");
+  const [debouncedAppointmentSearch, setDebouncedAppointmentSearch] = useState("");
 
   // Receptionist Forms state
   const [patientForm, setPatientForm] = useState(initialPatientForm);
   const [isSavingPatient, setIsSavingPatient] = useState(false);
   const [patientMsg, setPatientMsg] = useState("");
   const [patientErr, setPatientErr] = useState("");
+  const [lastRegisteredPatient, setLastRegisteredPatient] = useState<Patient | null>(null);
 
   const [appointmentForm, setAppointmentForm] = useState(initialAppointmentForm);
   const [isSavingAppointment, setIsSavingAppointment] = useState(false);
   const [appointmentMsg, setAppointmentMsg] = useState("");
   const [appointmentErr, setAppointmentErr] = useState("");
+
+  // Appointment editing state
+  const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
+  const [editApptForm, setEditApptForm] = useState({ doctorId: "", appointmentAt: "", status: "", notes: "" });
+  const [isSavingEditAppt, setIsSavingEditAppt] = useState(false);
+  const [editApptMsg, setEditApptMsg] = useState("");
+  const [editApptErr, setEditApptErr] = useState("");
 
   // Unified Check-In States
   const [checkInDoctorId, setCheckInDoctorId] = useState("");
@@ -235,6 +253,11 @@ export default function EmployeePage() {
   const [todayAppointments, setTodayAppointments] = useState<Appointment[]>([]);
   const [isLoadingToday, setIsLoadingToday] = useState(false);
   const [activeOpdVisit, setActiveOpdVisit] = useState<OpdVisit | null>(null);
+  // Reports operational logs state
+  const [activityLogs, setActivityLogs] = useState<any[]>([]);
+  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+  const [logsPagination, setLogsPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 1 });
+  const [logsPage, setLogsPage] = useState(1);
   const [opdForm, setOpdForm] = useState(initialOpdForm);
   const [prescriptionRows, setPrescriptionRows] = useState<PrescriptionDraft[]>([blankPrescriptionRow]);
   const [isSavingOpd, setIsSavingOpd] = useState(false);
@@ -305,6 +328,38 @@ export default function EmployeePage() {
       });
   }, [token, hospitalId]);
 
+  // Load hospital info
+  useEffect(() => {
+    if (!token || !hospitalId) return;
+
+    fetch(`/api/hospitals/${hospitalId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          setHospitalName(data.data.name);
+          setHospitalLogo(data.data.logo || "");
+        }
+      });
+  }, [token, hospitalId]);
+
+  // Debouncing logic for patient search
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedPatientSearch(patientSearch);
+    }, 400);
+    return () => clearTimeout(handler);
+  }, [patientSearch]);
+
+  // Debouncing logic for appointment search
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedAppointmentSearch(appointmentSearch);
+    }, 400);
+    return () => clearTimeout(handler);
+  }, [appointmentSearch]);
+
   // Fetch Patients List
   const fetchPatients = useCallback(async () => {
     if (!token || !hospitalId) return;
@@ -313,7 +368,7 @@ export default function EmployeePage() {
       const params = new URLSearchParams({
         page: String(patientPage),
         limit: "10",
-        search: patientSearch,
+        search: debouncedPatientSearch,
         hospitalId,
       });
       const res = await fetch(`/api/patients?${params.toString()}`, {
@@ -329,7 +384,7 @@ export default function EmployeePage() {
     } finally {
       setIsLoadingPatients(false);
     }
-  }, [token, hospitalId, patientPage, patientSearch]);
+  }, [token, hospitalId, patientPage, debouncedPatientSearch]);
 
   // Fetch employees list
   const fetchEmployees = useCallback(async () => {
@@ -355,7 +410,7 @@ export default function EmployeePage() {
       const params = new URLSearchParams({
         page: String(appointmentPage),
         limit: "10",
-        search: appointmentSearch,
+        search: debouncedAppointmentSearch,
         status: appointmentStatus,
         hospitalId,
       });
@@ -372,7 +427,7 @@ export default function EmployeePage() {
     } finally {
       setIsLoadingAppointments(false);
     }
-  }, [token, hospitalId, appointmentPage, appointmentSearch, appointmentStatus]);
+  }, [token, hospitalId, appointmentPage, debouncedAppointmentSearch, appointmentStatus]);
 
   // Fetch Doctor's Today Queue
   const fetchTodayQueue = useCallback(async () => {
@@ -432,10 +487,30 @@ export default function EmployeePage() {
     }
   }, [token, hospitalId]);
 
+  // Fetch activity logs for Reports tab
+  const fetchLogs = useCallback(async () => {
+    if (!token || !hospitalId) return;
+    setIsLoadingLogs(true);
+    try {
+      const res = await fetch(`/api/activity-logs?hospitalId=${hospitalId}&page=${logsPage}&limit=10`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setActivityLogs(data.data.activityLogs);
+        setLogsPagination(data.data.pagination);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoadingLogs(false);
+    }
+  }, [token, hospitalId, logsPage]);
+
   // Load screen data dynamically
   useEffect(() => {
     if (token && hospitalId) {
-      if (activeTab === "patients") fetchPatients();
+      if (activeTab === "patients") { fetchPatients(); fetchEmployees(); }
       if (activeTab === "appointments") {
         fetchAppointments();
         fetchEmployees();
@@ -445,8 +520,11 @@ export default function EmployeePage() {
         fetchPatients();
         fetchEmployees();
       }
+      if (activeTab === "reports") {
+        fetchLogs();
+      }
     }
-  }, [activeTab, token, hospitalId, fetchPatients, fetchAppointments, fetchEmployees, fetchTodayQueue]);
+  }, [activeTab, token, hospitalId, fetchPatients, fetchAppointments, fetchEmployees, fetchTodayQueue, fetchLogs]);
 
   // Register Patient Form Handler (with optional Immediate Check-In)
   const handleRegisterPatient = async (e: FormEvent) => {
@@ -480,6 +558,7 @@ export default function EmployeePage() {
       }
 
       const newPatient = data.data;
+      setLastRegisteredPatient(newPatient);
 
       if (checkInImmediately) {
         // Sequentially call appointment check-in
@@ -650,6 +729,65 @@ export default function EmployeePage() {
     }
   };
 
+  // Update Appointment Handler
+  const handleUpdateAppointment = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!token || !editingAppointment) return;
+
+    setIsSavingEditAppt(true);
+    setEditApptMsg("");
+    setEditApptErr("");
+
+    try {
+      const res = await fetch(`/api/appointments/${editingAppointment.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          doctorId: editApptForm.doctorId || undefined,
+          appointmentAt: editApptForm.appointmentAt ? new Date(editApptForm.appointmentAt).toISOString() : undefined,
+          status: editApptForm.status || undefined,
+          notes: editApptForm.notes || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setEditApptErr(data.message);
+      } else {
+        setEditApptMsg("Appointment updated successfully!");
+        setEditingAppointment(null);
+        fetchAppointments();
+        fetchTodayQueue();
+      }
+    } catch (err) {
+      console.error(err);
+      setEditApptErr("Failed to update appointment.");
+    } finally {
+      setIsSavingEditAppt(false);
+    }
+  };
+
+  // Quick status update
+  const handleUpdateAppointmentStatus = async (apptId: string, newStatus: string) => {
+    if (!token) return;
+    try {
+      await fetch(`/api/appointments/${apptId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      fetchAppointments();
+      fetchTodayQueue();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   // Doctor Action: Start OPD visit from appointment
   const handleStartOpdVisit = async (appt: Appointment) => {
     if (!token || !hospitalId) return;
@@ -799,6 +937,322 @@ export default function EmployeePage() {
   const handleOpenPatientProfile = (pat: Patient) => {
     setSelectedPatient(pat);
     fetchPatientOpdHistory(pat.id);
+    setActiveTab("patients");
+  };
+
+  const handlePrintPatientSlip = (patient: Patient, type: "REGISTRATION" | "CONSULTATION", opdVisit?: OpdVisit) => {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      alert("Please allow popups to print slips.");
+      return;
+    }
+
+    const hName = hospitalName || "MEDFLOW MEDICAL FACILITY";
+    const logoUrl = hospitalLogo || "";
+
+    const dateStr = opdVisit?.createdAt 
+      ? new Date(opdVisit.createdAt).toLocaleString() 
+      : new Date().toLocaleString();
+
+    let contentHtml = `
+      <html>
+        <head>
+          <title>Patient Slip - ${patient.patientCode}</title>
+          <style>
+            @media print {
+              body { margin: 1.5cm; }
+            }
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+              color: #20231f;
+              font-size: 13px;
+              line-height: 1.5;
+            }
+            .header {
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              border-bottom: 2px solid #2f5d50;
+              padding-bottom: 12px;
+              margin-bottom: 20px;
+            }
+            .hospital-info h2 {
+              margin: 0;
+              font-size: 20px;
+              color: #2f5d50;
+              font-weight: 800;
+            }
+            .hospital-info p {
+              margin: 2px 0 0 0;
+              font-size: 11px;
+              color: #626a62;
+            }
+            .logo {
+              max-height: 50px;
+              object-fit: contain;
+            }
+            .title {
+              text-align: center;
+              font-weight: bold;
+              font-size: 14px;
+              letter-spacing: 0.1em;
+              text-transform: uppercase;
+              margin-bottom: 20px;
+              color: #2f5d50;
+              border: 1px solid #dfe4d9;
+              padding: 6px;
+              background-color: #fcfdfc;
+            }
+            .section-title {
+              font-size: 11px;
+              font-weight: bold;
+              text-transform: uppercase;
+              color: #2f5d50;
+              border-bottom: 1px solid #dfe4d9;
+              padding-bottom: 4px;
+              margin-top: 20px;
+              margin-bottom: 10px;
+            }
+            .grid-2 {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 10px;
+            }
+            .patient-details {
+              border: 1px solid #dfe4d9;
+              padding: 12px;
+              border-radius: 6px;
+              background-color: #fcfdfc;
+              margin-bottom: 20px;
+            }
+            .patient-details div {
+              margin-bottom: 6px;
+            }
+            .patient-details span.label {
+              color: #626a62;
+              font-weight: 500;
+              width: 120px;
+              display: inline-block;
+            }
+            .patient-details span.value {
+              font-weight: bold;
+            }
+            .blank-lines {
+              margin-top: 30px;
+              border: 1px dashed #cfd6ca;
+              border-radius: 6px;
+              padding: 20px;
+              min-height: 400px;
+              background-color: #fafbfa;
+            }
+            .blank-lines p {
+              color: #a0a59e;
+              font-style: italic;
+              margin-top: 0;
+            }
+            .vitals-grid {
+              display: grid;
+              grid-template-columns: repeat(4, 1fr);
+              gap: 10px;
+              margin-bottom: 15px;
+            }
+            .vital-box {
+              border: 1px solid #dfe4d9;
+              padding: 8px;
+              border-radius: 4px;
+              text-align: center;
+            }
+            .vital-name {
+              font-size: 9px;
+              color: #626a62;
+              text-transform: uppercase;
+              font-weight: bold;
+            }
+            .vital-val {
+              font-size: 13px;
+              font-weight: bold;
+              margin-top: 2px;
+            }
+            .prescription-table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 10px;
+            }
+            .prescription-table th, .prescription-table td {
+              border: 1px solid #dfe4d9;
+              padding: 8px;
+              text-align: left;
+            }
+            .prescription-table th {
+              background-color: #f3f5f0;
+              color: #2f5d50;
+              font-size: 11px;
+              text-transform: uppercase;
+            }
+            .footer {
+              margin-top: 60px;
+              display: flex;
+              justify-content: space-between;
+              align-items: flex-end;
+            }
+            .signature-box {
+              border-top: 1px solid #626a62;
+              width: 200px;
+              text-align: center;
+              padding-top: 6px;
+              font-size: 11px;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div class="hospital-info">
+              <h2>${hName}</h2>
+              <p>OPD & Clinical Registry Services</p>
+            </div>
+            ${logoUrl ? `<img class="logo" src="${logoUrl}" />` : ""}
+          </div>
+
+          <div class="title">
+            ${type === "REGISTRATION" ? "Patient Registration Slip" : "Clinical Consultation Slip"}
+          </div>
+
+          <div class="patient-details">
+            <div class="grid-2">
+              <div>
+                <span class="label">Patient Code:</span>
+                <span class="value">${patient.patientCode}</span>
+              </div>
+              <div>
+                <span class="label">Slip Date/Time:</span>
+                <span class="value">${dateStr}</span>
+              </div>
+              <div>
+                <span class="label">Patient Name:</span>
+                <span class="value">${[patient.firstName, patient.middleName, patient.lastName].filter(Boolean).join(" ")}</span>
+              </div>
+              <div>
+                <span class="label">Gender / Age:</span>
+                <span class="value">${patient.gender} / ${patient.dateOfBirth ? Math.floor((new Date().getTime() - new Date(patient.dateOfBirth).getTime()) / 31557600000) + ' Yrs' : 'N/A'}</span>
+              </div>
+              <div>
+                <span class="label">Contact Phone:</span>
+                <span class="value">${patient.phone || "N/A"}</span>
+              </div>
+              <div>
+                <span class="label">Aadhaar Card:</span>
+                <span class="value font-mono">${patient.aadhaarNumber || "N/A"}</span>
+              </div>
+            </div>
+          </div>
+
+          ${type === "REGISTRATION" ? `
+            <div class="blank-lines">
+              <p>Clinical Notes & Physical Examination (Manual Entry Area):</p>
+              <div style="border-bottom: 1px dashed #cfd6ca; margin-top: 40px;"></div>
+              <div style="border-bottom: 1px dashed #cfd6ca; margin-top: 40px;"></div>
+              <div style="border-bottom: 1px dashed #cfd6ca; margin-top: 40px;"></div>
+              <div style="border-bottom: 1px dashed #cfd6ca; margin-top: 40px;"></div>
+              <div style="border-bottom: 1px dashed #cfd6ca; margin-top: 40px;"></div>
+              <div style="border-bottom: 1px dashed #cfd6ca; margin-top: 40px;"></div>
+              <div style="border-bottom: 1px dashed #cfd6ca; margin-top: 40px;"></div>
+            </div>
+          ` : `
+            <div>
+              ${opdVisit?.vitals ? `
+                <div class="section-title">Recorded Vitals</div>
+                <div class="vitals-grid">
+                  <div class="vital-box">
+                    <div class="vital-name">Blood Pressure</div>
+                    <div class="vital-val">${opdVisit.vitals.bloodPressure || "N/A"}</div>
+                  </div>
+                  <div class="vital-box">
+                    <div class="vital-name">Pulse Rate</div>
+                    <div class="vital-val">${opdVisit.vitals.pulse ? `${opdVisit.vitals.pulse} bpm` : "N/A"}</div>
+                  </div>
+                  <div class="vital-box">
+                    <div class="vital-name">Temperature</div>
+                    <div class="vital-val">${opdVisit.vitals.temperature ? `${opdVisit.vitals.temperature} °C` : "N/A"}</div>
+                  </div>
+                  <div class="vital-box">
+                    <div class="vital-name">Weight / Height</div>
+                    <div class="vital-val">${[opdVisit.vitals.weight ? `${opdVisit.vitals.weight}kg` : '', opdVisit.vitals.height ? `${opdVisit.vitals.height}cm` : ''].filter(Boolean).join(" / ") || "N/A"}</div>
+                  </div>
+                </div>
+              ` : ""}
+
+              ${opdVisit?.chiefComplaint ? `
+                <div class="section-title">Chief Complaint</div>
+                <div style="padding: 5px 0;">${opdVisit.chiefComplaint}</div>
+              ` : ""}
+
+              ${opdVisit?.diagnosis ? `
+                <div class="section-title">Diagnosis / Assessment</div>
+                <div style="padding: 5px 0; font-weight: bold; color: #2f5d50;">${opdVisit.diagnosis}</div>
+              ` : ""}
+
+              ${opdVisit?.clinicalNotes ? `
+                <div class="section-title">Clinical Notes</div>
+                <div style="padding: 5px 0; white-space: pre-wrap;">${opdVisit.clinicalNotes}</div>
+              ` : ""}
+
+              ${opdVisit?.treatmentPlan ? `
+                <div class="section-title">Treatment Plan</div>
+                <div style="padding: 5px 0;">${opdVisit.treatmentPlan}</div>
+              ` : ""}
+
+              ${opdVisit?.prescription && opdVisit.prescription.items && opdVisit.prescription.items.length > 0 ? `
+                <div class="section-title">Rx (Prescribed Medications)</div>
+                <table class="prescription-table">
+                  <thead>
+                    <tr>
+                      <th style="width: 5%">#</th>
+                      <th style="width: 45%">Medicine Name</th>
+                      <th style="width: 25%">Dosage / Frequency</th>
+                      <th style="width: 25%">Duration / Instructions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${opdVisit.prescription.items.map((item, idx) => `
+                      <tr>
+                        <td>${idx + 1}</td>
+                        <td style="font-weight: bold;">${item.medicineName}</td>
+                        <td>${[item.dosage, item.frequency].filter(Boolean).join(" - ")}</td>
+                        <td>${[item.duration, item.instructions].filter(Boolean).join(" - ")}</td>
+                      </tr>
+                    `).join("")}
+                  </tbody>
+                </table>
+                ${opdVisit.prescription.notes ? `
+                  <div style="margin-top: 8px; font-style: italic; font-size: 11px; color: #626a62;">
+                    <strong>Notes:</strong> ${opdVisit.prescription.notes}
+                  </div>
+                ` : ""}
+              ` : ""}
+            </div>
+          `}
+
+          <div class="footer">
+            <div>
+              <p style="font-size: 10px; color: #a0a59e; margin: 0;">Generated by MedFlow EHR System</p>
+            </div>
+            <div class="signature-box">
+              ${type === "CONSULTATION" ? "Consulting Doctor Signature" : "Reception Desk Signature"}
+            </div>
+          </div>
+
+          <script>
+            window.onload = function() {
+              window.print();
+              setTimeout(function() { window.close(); }, 500);
+            }
+          </script>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.write(contentHtml);
+    printWindow.document.close();
   };
 
   // Logout
@@ -809,22 +1263,61 @@ export default function EmployeePage() {
   };
 
   return (
-    <main className="min-h-screen bg-[#f7f7f4] text-[#20231f] flex">
-      {/* Sidebar */}
-      <aside className="w-64 border-r border-[#dfe4d9] bg-white flex flex-col justify-between">
+    <main className="min-h-screen bg-[#f7f7f4] text-[#20231f] flex flex-col md:flex-row">
+      {/* Mobile Sidebar Backdrop */}
+      {isMobileMenuOpen && (
+        <div
+          onClick={() => setIsMobileMenuOpen(false)}
+          className="fixed inset-0 z-30 bg-black/40 md:hidden animate-fade-in"
+        />
+      )}
+
+      {/* Mobile Top Header Bar */}
+      <div className="md:hidden bg-white border-b border-[#dfe4d9] px-4 py-3 flex items-center justify-between sticky top-0 z-30 w-full">
+        <div className="flex items-center gap-2">
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#477063]">
+            MedFlow
+          </p>
+          <span className="text-[10px] bg-[#eef3eb] text-[#2f5d50] px-2 py-0.5 rounded font-bold capitalize">
+            {role.replace("_", " ")}
+          </span>
+        </div>
+        <button
+          onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+          className="p-1 text-[#20231f] focus:outline-none"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Sidebar - Desktop and Mobile Drawer */}
+      <aside className={`
+        fixed md:static inset-y-0 left-0 z-40 w-64 border-r border-[#dfe4d9] bg-white flex flex-col justify-between transition-transform duration-300
+        ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
+      `}>
         <div>
-          <div className="p-6 border-b border-[#dfe4d9]">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#477063]">
-              MedFlow Operations
-            </p>
-            <h1 className="text-lg font-bold mt-1 text-[#151917] capitalize">{role.replace("_", " ")} Desk</h1>
+          <div className="p-6 border-b border-[#dfe4d9] flex justify-between items-center">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#477063]">
+                MedFlow Operations
+              </p>
+              <h1 className="text-lg font-bold mt-1 text-[#151917] capitalize">{role.replace("_", " ")} Desk</h1>
+            </div>
+            <button
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="md:hidden p-1 text-[#626a62] hover:text-red-500 font-bold"
+            >
+              ✕
+            </button>
           </div>
 
           <nav className="p-4 space-y-1">
             {role === "receptionist" && (
               <>
                 <button
-                  onClick={() => setActiveTab("dashboard")}
+                  onClick={() => handleTabChange("dashboard")}
                   className={`w-full text-left px-4 py-2 text-sm font-semibold rounded-md transition ${
                     activeTab === "dashboard" ? "bg-[#eef3eb] text-[#2f5d50]" : "text-[#626a62] hover:bg-[#f3f5f0]"
                   }`}
@@ -832,12 +1325,20 @@ export default function EmployeePage() {
                   Dashboard Queue
                 </button>
                 <button
-                  onClick={() => setActiveTab("patients")}
+                  onClick={() => handleTabChange("patients")}
                   className={`w-full text-left px-4 py-2 text-sm font-semibold rounded-md transition ${
                     activeTab === "patients" ? "bg-[#eef3eb] text-[#2f5d50]" : "text-[#626a62] hover:bg-[#f3f5f0]"
                   }`}
                 >
                   Patient Registry & Check-In
+                </button>
+                <button
+                  onClick={() => handleTabChange("appointments")}
+                  className={`w-full text-left px-4 py-2 text-sm font-semibold rounded-md transition ${
+                    activeTab === "appointments" ? "bg-[#eef3eb] text-[#2f5d50]" : "text-[#626a62] hover:bg-[#f3f5f0]"
+                  }`}
+                >
+                  Appointments Desk
                 </button>
               </>
             )}
@@ -845,7 +1346,7 @@ export default function EmployeePage() {
             {role === "doctor" && (
               <>
                 <button
-                  onClick={() => setActiveTab("dashboard")}
+                  onClick={() => handleTabChange("dashboard")}
                   className={`w-full text-left px-4 py-2 text-sm font-semibold rounded-md transition ${
                     activeTab === "dashboard" ? "bg-[#eef3eb] text-[#2f5d50]" : "text-[#626a62] hover:bg-[#f3f5f0]"
                   }`}
@@ -853,7 +1354,7 @@ export default function EmployeePage() {
                   My Today's Queue
                 </button>
                 <button
-                  onClick={() => setActiveTab("patients")}
+                  onClick={() => handleTabChange("patients")}
                   className={`w-full text-left px-4 py-2 text-sm font-semibold rounded-md transition ${
                     activeTab === "patients" ? "bg-[#eef3eb] text-[#2f5d50]" : "text-[#626a62] hover:bg-[#f3f5f0]"
                   }`}
@@ -865,7 +1366,7 @@ export default function EmployeePage() {
 
             {role === "accountant" && (
               <button
-                onClick={() => setActiveTab("billing")}
+                onClick={() => handleTabChange("billing")}
                 className={`w-full text-left px-4 py-2 text-sm font-semibold rounded-md transition ${
                   activeTab === "billing" ? "bg-[#eef3eb] text-[#2f5d50]" : "text-[#626a62] hover:bg-[#f3f5f0]"
                 }`}
@@ -877,7 +1378,7 @@ export default function EmployeePage() {
             {role === "lab_technician" && (
               <>
                 <button
-                  onClick={() => setActiveTab("lab")}
+                  onClick={() => handleTabChange("lab")}
                   className={`w-full text-left px-4 py-2 text-sm font-semibold rounded-md transition ${
                     activeTab === "lab" ? "bg-[#eef3eb] text-[#2f5d50]" : "text-[#626a62] hover:bg-[#f3f5f0]"
                   }`}
@@ -885,7 +1386,7 @@ export default function EmployeePage() {
                   Laboratory requests
                 </button>
                 <button
-                  onClick={() => setActiveTab("radiology")}
+                  onClick={() => handleTabChange("radiology")}
                   className={`w-full text-left px-4 py-2 text-sm font-semibold rounded-md transition ${
                     activeTab === "radiology" ? "bg-[#eef3eb] text-[#2f5d50]" : "text-[#626a62] hover:bg-[#f3f5f0]"
                   }`}
@@ -893,6 +1394,16 @@ export default function EmployeePage() {
                   Radiology requests
                 </button>
               </>
+            )}
+            {enabledModules.includes("REPORTS") && (
+              <button
+                onClick={() => handleTabChange("reports")}
+                className={`w-full text-left px-4 py-2 text-sm font-semibold rounded-md transition ${
+                  activeTab === "reports" ? "bg-[#eef3eb] text-[#2f5d50]" : "text-[#626a62] hover:bg-[#f3f5f0]"
+                }`}
+              >
+                Operational Reports
+              </button>
             )}
           </nav>
         </div>
@@ -914,7 +1425,7 @@ export default function EmployeePage() {
       </aside>
 
       {/* Content Area */}
-      <section className="flex-1 p-8 overflow-y-auto max-w-7xl mx-auto w-full">
+      <section className="flex-1 p-4 md:p-8 overflow-y-auto max-w-7xl mx-auto w-full">
         {/* Receptionist/Doctor Dashboard: Today's Queue */}
         {activeTab === "dashboard" && (role === "receptionist" || role === "doctor") && (
           <div className="space-y-6">
@@ -931,7 +1442,13 @@ export default function EmployeePage() {
               {/* Today Queue list */}
               <Surface title="Today's Consultation Lineup">
                 {isLoadingToday ? (
-                  <div className="text-center py-8 text-[#626a62]">Loading queue lineup...</div>
+                  <div className="flex flex-col items-center justify-center py-12 text-[#626a62] gap-3">
+                    <svg className="animate-spin h-8 w-8 text-[#2f5d50]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span className="text-xs font-semibold uppercase tracking-wider">Loading queue lineup...</span>
+                  </div>
                 ) : todayAppointments.length === 0 ? (
                   <p className="text-center py-8 text-[#626a62]">No appointments lined up for today.</p>
                 ) : (
@@ -980,6 +1497,7 @@ export default function EmployeePage() {
               {role === "doctor" && (
                 <div>
                   {activeOpdVisit ? (
+                    <>
                     <Surface title={`Medical consultation: ${activeOpdVisit.visitNo}`} description={`Patient: ${selectedPatient ? [selectedPatient.firstName, selectedPatient.lastName].filter(Boolean).join(" ") : ""}`}>
                       <form onSubmit={handleSaveOpdVisit} className="space-y-4">
                         <div>
@@ -994,7 +1512,7 @@ export default function EmployeePage() {
                         {/* Vitals */}
                         <div className="p-4 border border-[#d8ddd3] bg-[#fcfdfc] rounded-lg">
                           <p className="text-xs font-bold uppercase tracking-wider text-[#2f5d50]">Patient Vitals</p>
-                          <div className="grid grid-cols-3 gap-3 mt-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
                             <div>
                               <label className="text-[10px] font-bold text-[#626a62]">Temp (°C)</label>
                               <input
@@ -1088,15 +1606,104 @@ export default function EmployeePage() {
                           </select>
                         </div>
 
+                        {opdMsg && (
+                          <div className="rounded bg-[#eef8f1] p-3 text-xs text-[#27603a] font-semibold">
+                            {opdMsg}
+                          </div>
+                        )}
+                        {opdErr && (
+                          <div className="rounded bg-[#fff0ef] p-3 text-xs text-[#9f2d24] font-semibold">
+                            {opdErr}
+                          </div>
+                        )}
+
                         <button
                           type="submit"
                           disabled={isSavingOpd}
-                          className="w-full h-10 px-4 rounded-md text-sm font-semibold text-white bg-[#2f5d50] hover:bg-[#24483e] transition disabled:opacity-60"
+                          className="w-full h-10 px-4 rounded-md text-sm font-semibold text-white bg-[#2f5d50] hover:bg-[#24483e] transition disabled:opacity-60 flex items-center justify-center gap-2"
                         >
+                          {isSavingOpd && (
+                            <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                          )}
                           {isSavingOpd ? "Saving Consultation..." : "Save Medical OPD Record"}
                         </button>
                       </form>
                     </Surface>
+
+                    {/* Patient Clinical History & Demographics */}
+                    <div className="mt-6">
+                      <Surface title="Patient Clinical History & Demographics" description="Demographics details and historical medical visits.">
+                        <div className="space-y-4 text-xs">
+                          {selectedPatient && (
+                            <div className="p-3 bg-[#f3f5f0] border border-[#d8ddd3] rounded-lg">
+                              <p className="font-bold text-[#2f5d50] uppercase tracking-wider text-[10px]">Demographics</p>
+                              <div className="grid grid-cols-2 gap-y-1.5 gap-x-3 mt-1.5">
+                                <div><span className="text-[#626a62]">Name:</span> <span className="font-semibold">{[selectedPatient.firstName, selectedPatient.lastName].filter(Boolean).join(" ")}</span></div>
+                                <div><span className="text-[#626a62]">Gender:</span> <span className="font-semibold capitalize">{selectedPatient.gender.toLowerCase()}</span></div>
+                                <div><span className="text-[#626a62]">Blood Group:</span> <span className="font-semibold">{selectedPatient.bloodGroup?.replace("_", " ") || "N/A"}</span></div>
+                                <div><span className="text-[#626a62]">Phone:</span> <span className="font-semibold">{selectedPatient.phone || "N/A"}</span></div>
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="border-t border-[#dfe4d9] pt-3">
+                            <p className="font-bold text-[#2f5d50] uppercase tracking-wider text-[10px] mb-2">Previous OPD Visits</p>
+                            {isLoadingHistory ? (
+                              <div className="flex flex-col items-center justify-center py-6 text-[#626a62] gap-2">
+                                <svg className="animate-spin h-5 w-5 text-[#2f5d50]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                <span className="text-[10px] font-semibold uppercase tracking-wider">Loading history...</span>
+                              </div>
+                            ) : opdHistory.filter(h => h.id !== activeOpdVisit.id).length === 0 ? (
+                              <p className="text-xs text-[#626a62] italic">No previous consultations found.</p>
+                            ) : (
+                              <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                                {opdHistory.filter(h => h.id !== activeOpdVisit.id).map((visit) => (
+                                  <div key={visit.id} className="p-3 border border-[#d8ddd3] bg-[#fcfdfc] rounded-lg space-y-2">
+                                    <div className="flex justify-between font-bold text-[11px]">
+                                      <span>{visit.visitNo}</span>
+                                      <span className="text-[#626a62] font-normal">{new Date(visit.createdAt || "").toLocaleDateString()}</span>
+                                    </div>
+                                    <p><span className="text-[#626a62]">Complaint:</span> {visit.chiefComplaint || "None"}</p>
+                                    <p><span className="text-[#626a62]">Diagnosis:</span> <span className="font-semibold text-[#2f5d50]">{visit.diagnosis || "Pending"}</span></p>
+                                    {visit.clinicalNotes && <p><span className="text-[#626a62]">Notes:</span> {visit.clinicalNotes}</p>}
+                                    {visit.treatmentPlan && <p><span className="text-[#626a62]">Treatment:</span> {visit.treatmentPlan}</p>}
+                                    {visit.prescription && visit.prescription.items && visit.prescription.items.length > 0 && (
+                                      <div className="mt-1 p-2 bg-amber-50/50 border border-amber-200 rounded">
+                                        <p className="text-[9px] font-bold text-amber-800 uppercase tracking-wider mb-1">Prescription</p>
+                                        <div className="space-y-0.5 text-[10px]">
+                                          {visit.prescription.items.map((item, idx) => (
+                                            <div key={idx} className="flex justify-between">
+                                              <span className="font-semibold">{item.medicineName}</span>
+                                              <span className="text-[#626a62]">{[item.dosage, item.frequency, item.duration].filter(Boolean).join(" • ")}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                    <div className="flex justify-end pt-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handlePrintPatientSlip(selectedPatient!, "CONSULTATION", visit)}
+                                        className="px-2 py-0.5 border border-[#cfd6ca] text-[9px] font-bold rounded hover:bg-[#f3f5f0]"
+                                      >
+                                        Print Slip
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </Surface>
+                    </div>
+                    </>
                   ) : (
                     <div className="h-full border border-dashed border-[#dfe4d9] rounded-lg flex flex-col justify-center text-center p-8 text-[#626a62]">
                       <p className="text-sm font-bold uppercase tracking-wider text-[#2f5d50]">Medical Console</p>
@@ -1138,9 +1745,9 @@ export default function EmployeePage() {
               )}
             </div>
 
-            <div className="grid xl:grid-cols-[1.2fr_1fr] gap-6">
+            <div className="flex flex-col gap-6">
               {/* Directory */}
-              <div className="space-y-4">
+              <div className="space-y-4 order-2">
                 <input
                   type="text"
                   placeholder="Search patient by Aadhaar, Code, Name, Phone..."
@@ -1154,7 +1761,13 @@ export default function EmployeePage() {
 
                 <Surface title="Registered Patients">
                   {isLoadingPatients ? (
-                    <div className="text-center py-8 text-[#626a62]">Loading database...</div>
+                    <div className="flex flex-col items-center justify-center py-12 text-[#626a62] gap-3">
+                      <svg className="animate-spin h-8 w-8 text-[#2f5d50]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <span className="text-xs font-semibold uppercase tracking-wider">Loading database...</span>
+                    </div>
                   ) : patients.length === 0 ? (
                     <p className="text-center py-8 text-[#626a62]">No patients matched.</p>
                   ) : (
@@ -1224,7 +1837,7 @@ export default function EmployeePage() {
               </div>
 
               {/* Patient Profile / Registration Form */}
-              <div>
+              <div className="order-1">
                 {selectedPatient ? (
                   <div className="space-y-6">
                     <Surface title={`Profile: ${selectedPatient.patientCode}`} description="Patient demographics & files history.">
@@ -1250,32 +1863,85 @@ export default function EmployeePage() {
                               </div>
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => setSelectedPatient(null)}
-                            className="text-xs px-2 py-1 border border-[#cfd6ca] text-red-600 rounded hover:bg-red-50"
-                          >
-                            Close
-                          </button>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handlePrintPatientSlip(selectedPatient, "REGISTRATION")}
+                              className="text-xs px-2.5 py-1 border border-[#cfd6ca] bg-[#eef3eb] text-[#2f5d50] hover:bg-[#e4ebde] font-bold rounded"
+                            >
+                              Print Blank Slip
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedPatient(null)}
+                              className="text-xs px-2 py-1 border border-[#cfd6ca] text-red-600 rounded hover:bg-red-50"
+                            >
+                              Close
+                            </button>
+                          </div>
                         </div>
 
                         {/* OPD medical visits history */}
                         <div className="border-t border-[#dfe4d9] pt-4">
                           <p className="text-xs font-bold uppercase tracking-wider text-[#2f5d50]">Medical consults History</p>
                           {isLoadingHistory ? (
-                            <p className="text-xs text-[#626a62] py-2">Loading medical file...</p>
+                            <div className="flex flex-col items-center justify-center py-8 text-[#626a62] gap-2">
+                              <svg className="animate-spin h-6 w-6 text-[#2f5d50]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                              </svg>
+                              <span className="text-[10px] font-semibold uppercase tracking-wider">Loading medical file...</span>
+                            </div>
                           ) : opdHistory.length === 0 ? (
                             <p className="text-xs text-[#626a62] py-2">No consult files documented.</p>
                           ) : (
-                            <div className="space-y-2 mt-2 max-h-[150px] overflow-y-auto">
+                            <div className="space-y-2 mt-2 max-h-[300px] overflow-y-auto">
                               {opdHistory.map((visit) => (
-                                <div key={visit.id} className="p-3 border border-[#d8ddd3] bg-[#fcfdfc] rounded text-xs space-y-1">
+                                <div key={visit.id} className="p-3 border border-[#d8ddd3] bg-[#fcfdfc] rounded text-xs space-y-2">
                                   <div className="flex justify-between font-bold">
                                     <span>{visit.visitNo}</span>
                                     <span className="text-[#626a62] font-normal">{new Date(visit.createdAt || "").toLocaleDateString()}</span>
                                   </div>
                                   <p><span className="text-[#626a62]">Complaint:</span> {visit.chiefComplaint || "None"}</p>
                                   <p><span className="text-[#626a62]">Diagnosis:</span> {visit.diagnosis || "Pending"}</p>
+                                  {visit.clinicalNotes && (
+                                    <p><span className="text-[#626a62]">Clinical Notes:</span> {visit.clinicalNotes}</p>
+                                  )}
+                                  {visit.treatmentPlan && (
+                                    <p><span className="text-[#626a62]">Treatment:</span> {visit.treatmentPlan}</p>
+                                  )}
+                                  {visit.vitals && (
+                                    <div className="flex flex-wrap gap-2 mt-1">
+                                      {visit.vitals.bloodPressure && <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-semibold">BP: {visit.vitals.bloodPressure}</span>}
+                                      {visit.vitals.pulse && <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-semibold">Pulse: {visit.vitals.pulse}</span>}
+                                      {visit.vitals.temperature && <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-semibold">Temp: {visit.vitals.temperature}°C</span>}
+                                    </div>
+                                  )}
+                                  {visit.prescription && visit.prescription.items && visit.prescription.items.length > 0 && (
+                                    <div className="mt-1 p-2 bg-amber-50 border border-amber-200 rounded">
+                                      <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700 mb-1">Prescription</p>
+                                      <div className="space-y-0.5">
+                                        {visit.prescription.items.map((item, idx) => (
+                                          <div key={idx} className="flex justify-between text-[10px]">
+                                            <span className="font-semibold">{item.medicineName}</span>
+                                            <span className="text-[#626a62]">{[item.dosage, item.frequency, item.duration].filter(Boolean).join(" • ")}</span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                      {visit.prescription.notes && (
+                                        <p className="text-[10px] text-[#626a62] mt-1 italic">Note: {visit.prescription.notes}</p>
+                                      )}
+                                    </div>
+                                  )}
+                                  <div className="flex justify-end pt-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handlePrintPatientSlip(selectedPatient, "CONSULTATION", visit)}
+                                      className="px-2 py-0.5 border border-[#cfd6ca] text-[10px] font-bold rounded hover:bg-[#f3f5f0]"
+                                    >
+                                      Print Consultation Slip
+                                    </button>
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -1286,13 +1952,13 @@ export default function EmployeePage() {
 
                     {/* Check-In Form for receptionist */}
                     {role === "receptionist" && (
+                      <>
                       <Surface title="Patient Vitals & Doctor Assignment Check-In" description="Assign a doctor and record initial clinical vitals checks immediately.">
                         <form onSubmit={handleExistingPatientCheckIn} className="space-y-4">
                           <div className="grid grid-cols-2 gap-4">
                             <div>
                               <label className="block text-xs font-semibold">Consulting Doctor</label>
                               <select
-                                required
                                 value={checkInDoctorId}
                                 onChange={(e) => setCheckInDoctorId(e.target.value)}
                                 className="mt-1 block w-full h-9 border border-[#cfd6ca] rounded bg-white text-xs px-2"
@@ -1319,7 +1985,7 @@ export default function EmployeePage() {
 
                           <div className="p-3 border border-[#d8ddd3] bg-[#fcfdfc] rounded-lg">
                             <p className="text-[10px] font-bold uppercase tracking-wider text-[#2f5d50]">Immediate Vitals Check</p>
-                            <div className="grid grid-cols-3 gap-2.5 mt-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mt-2">
                               <div>
                                 <label className="text-[9px] font-bold text-[#626a62]">BP (mmHg)</label>
                                 <input
@@ -1351,7 +2017,7 @@ export default function EmployeePage() {
                                 />
                               </div>
                             </div>
-                            <div className="grid grid-cols-3 gap-2.5 mt-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mt-2">
                               <div>
                                 <label className="text-[9px] font-bold text-[#626a62]">Temp (°C)</label>
                                 <input
@@ -1388,8 +2054,14 @@ export default function EmployeePage() {
                           <button
                             type="submit"
                             disabled={isSavingCheckIn}
-                            className="w-full h-9 rounded text-xs font-semibold text-white bg-[#2f5d50] hover:bg-[#24483e] transition disabled:opacity-60"
+                            className="w-full h-9 rounded text-xs font-semibold text-white bg-[#2f5d50] hover:bg-[#24483e] transition disabled:opacity-60 flex items-center justify-center gap-2"
                           >
+                            {isSavingCheckIn && (
+                              <svg className="animate-spin h-3.5 w-3.5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                              </svg>
+                            )}
                             {isSavingCheckIn ? "Checking In..." : "Complete Check-In"}
                           </button>
 
@@ -1405,13 +2077,106 @@ export default function EmployeePage() {
                           )}
                         </form>
                       </Surface>
+
+                      <Surface title="Schedule Future Appointment" description={"Book a future consultation for " + selectedPatient.firstName + " " + (selectedPatient.lastName || "")}>
+                        <form onSubmit={(e) => {
+                          e.preventDefault();
+                          if (!token || !hospitalId || !selectedPatient) return;
+                          setIsSavingAppointment(true);
+                          setAppointmentMsg("");
+                          setAppointmentErr("");
+                          const payload = {
+                            patientId: selectedPatient.id,
+                            doctorId: appointmentForm.doctorId || undefined,
+                            appointmentAt: new Date(appointmentForm.appointmentAt).toISOString(),
+                            status: "SCHEDULED",
+                            notes: appointmentForm.notes,
+                            hospitalId,
+                          };
+                          fetch("/api/appointments", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                            body: JSON.stringify(payload),
+                          })
+                            .then(res => res.json())
+                            .then(data => {
+                              if (!data.success) setAppointmentErr(data.message);
+                              else {
+                                setAppointmentMsg(`Appointment scheduled! No: ${data.data.appointmentNo}`);
+                                setAppointmentForm(initialAppointmentForm);
+                                fetchAppointments();
+                                fetchTodayQueue();
+                              }
+                            })
+                            .catch(() => setAppointmentErr("Failed to schedule."))
+                            .finally(() => setIsSavingAppointment(false));
+                        }} className="space-y-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                              <label className="block text-xs font-semibold">Consulting Doctor</label>
+                              <select
+                                value={appointmentForm.doctorId}
+                                onChange={(e) => setAppointmentForm({ ...appointmentForm, doctorId: e.target.value })}
+                                className="mt-1 block w-full h-9 border border-[#cfd6ca] rounded bg-white text-xs px-2"
+                              >
+                                <option value="">Choose doctor...</option>
+                                {doctorsList.map((doc) => (
+                                  <option key={doc.id} value={doc.id}>
+                                    {doc.fullName} ({doc.department || "No Dept"})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-xs font-semibold">Date & Time</label>
+                              <input
+                                type="datetime-local"
+                                required
+                                value={appointmentForm.appointmentAt}
+                                onChange={(e) => setAppointmentForm({ ...appointmentForm, appointmentAt: e.target.value })}
+                                className="mt-1 block w-full h-9 border border-[#cfd6ca] rounded bg-white text-xs px-2"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-semibold">Notes / Reason</label>
+                            <input
+                              type="text"
+                              value={appointmentForm.notes}
+                              onChange={(e) => setAppointmentForm({ ...appointmentForm, notes: e.target.value })}
+                              className="mt-1 block w-full h-9 border border-[#cfd6ca] rounded bg-white text-xs px-2"
+                              placeholder="e.g. Follow-up, Regular checkup"
+                            />
+                          </div>
+                          <button
+                            type="submit"
+                            disabled={isSavingAppointment}
+                            className="w-full h-9 rounded text-xs font-semibold text-white bg-[#2f5d50] hover:bg-[#24483e] transition disabled:opacity-60 flex items-center justify-center gap-2"
+                          >
+                            {isSavingAppointment && (
+                              <svg className="animate-spin h-3.5 w-3.5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                              </svg>
+                            )}
+                            {isSavingAppointment ? "Scheduling..." : "Schedule Appointment"}
+                          </button>
+                          {appointmentMsg && (
+                            <div className="rounded bg-[#eef8f1] p-2 text-xs text-[#27603a] font-semibold">{appointmentMsg}</div>
+                          )}
+                          {appointmentErr && (
+                            <div className="rounded bg-[#fff0ef] p-2 text-xs text-[#9f2d24] font-semibold">{appointmentErr}</div>
+                          )}
+                        </form>
+                      </Surface>
+                      </>
                     )}
                   </div>
                 ) : role === "receptionist" ? (
                   <Surface title="New Patient Registration & Check-In" description="Register a new patient and check them in directly on a single screen.">
                     <form onSubmit={handleRegisterPatient} className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
                       <p className="text-xs font-bold uppercase tracking-wider text-[#2f5d50] border-b border-[#dfe4d9] pb-1">1. Demographics</p>
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                           <label className="block text-xs font-semibold">First Name</label>
                           <input
@@ -1434,7 +2199,7 @@ export default function EmployeePage() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                           <label className="block text-xs font-semibold">Gender</label>
                           <select
@@ -1458,7 +2223,7 @@ export default function EmployeePage() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                           <label className="block text-xs font-semibold">Phone</label>
                           <input
@@ -1484,7 +2249,7 @@ export default function EmployeePage() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                           <label className="block text-xs font-semibold">Aadhaar Card Number</label>
                           <input
@@ -1520,7 +2285,7 @@ export default function EmployeePage() {
                         />
                       </div>
 
-                      <div className="grid grid-cols-3 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                         <div>
                           <label className="block text-xs font-semibold">City</label>
                           <input
@@ -1565,7 +2330,7 @@ export default function EmployeePage() {
                       {checkInImmediately && (
                         <div className="p-3 border border-[#d8ddd3] bg-[#fcfdfc] rounded-lg space-y-3">
                           <p className="text-[10px] font-bold uppercase tracking-wider text-[#2f5d50] border-b border-[#dfe4d9] pb-1">2. Assign Doctor & Check-In Vitals</p>
-                          <div className="grid grid-cols-2 gap-3">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
                               <label className="block text-[10px] font-semibold">Consulting Doctor</label>
                               <select
@@ -1594,7 +2359,7 @@ export default function EmployeePage() {
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-3 gap-2">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                             <div>
                               <label className="text-[9px] font-bold text-[#626a62]">BP (mmHg)</label>
                               <input
@@ -1627,7 +2392,7 @@ export default function EmployeePage() {
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-3 gap-2">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                             <div>
                               <label className="text-[9px] font-bold text-[#626a62]">Temp (°C)</label>
                               <input
@@ -1665,14 +2430,29 @@ export default function EmployeePage() {
                       <button
                         type="submit"
                         disabled={isSavingPatient}
-                        className="w-full h-10 px-4 rounded-md text-sm font-semibold text-white bg-[#2f5d50] hover:bg-[#24483e] transition disabled:opacity-60"
+                        className="w-full h-10 px-4 rounded-md text-sm font-semibold text-white bg-[#2f5d50] hover:bg-[#24483e] transition disabled:opacity-60 flex items-center justify-center gap-2"
                       >
+                        {isSavingPatient && (
+                          <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                        )}
                         {isSavingPatient ? "Saving Record..." : checkInImmediately ? "Register & Check-In Patient" : "Register Patient Only"}
                       </button>
 
                       {patientMsg && (
-                        <div className="rounded bg-[#eef8f1] p-3 text-xs text-[#27603a] font-semibold">
-                          {patientMsg}
+                        <div className="rounded bg-[#eef8f1] p-3 text-xs text-[#27603a] font-semibold flex items-center justify-between gap-3">
+                          <span>{patientMsg}</span>
+                          {lastRegisteredPatient && (
+                            <button
+                              type="button"
+                              onClick={() => handlePrintPatientSlip(lastRegisteredPatient, "REGISTRATION")}
+                              className="px-2.5 py-1 bg-[#2f5d50] text-white hover:bg-[#24483e] font-bold rounded text-[10px] whitespace-nowrap"
+                            >
+                              Print Slip
+                            </button>
+                          )}
                         </div>
                       )}
                       {patientErr && (
@@ -1725,10 +2505,17 @@ export default function EmployeePage() {
 
                 <Surface title="Scheduled Appointments Queue">
                   {isLoadingAppointments ? (
-                    <div className="text-center py-8 text-[#626a62]">Loading queue...</div>
+                    <div className="flex flex-col items-center justify-center py-12 text-[#626a62] gap-3">
+                      <svg className="animate-spin h-8 w-8 text-[#2f5d50]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <span className="text-xs font-semibold uppercase tracking-wider">Loading appointments...</span>
+                    </div>
                   ) : appointments.length === 0 ? (
                     <p className="text-center py-8 text-[#626a62]">No appointments scheduled.</p>
                   ) : (
+                    <>
                     <div className="overflow-x-auto">
                       <table className="w-full text-left text-sm border-collapse">
                         <thead className="bg-[#f3f5f0] text-xs uppercase tracking-wider text-[#626a62]">
@@ -1736,27 +2523,91 @@ export default function EmployeePage() {
                             <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">No</th>
                             <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Patient</th>
                             <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Doctor</th>
-                            <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Time</th>
+                            <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Date/Time</th>
                             <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Status</th>
+                            <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Actions</th>
                           </tr>
                         </thead>
                         <tbody>
                           {appointments.map((a) => (
-                            <tr key={a.id} className="border-b border-[#edf0e9]">
+                            <tr key={a.id} className="border-b border-[#edf0e9] hover:bg-[#fcfdfc] transition">
                               <td className="px-4 py-3 font-semibold text-[#2f5d50]">{a.appointmentNo}</td>
                               <td className="px-4 py-3 font-medium">{[a.patient.firstName, a.patient.lastName].filter(Boolean).join(" ")}</td>
                               <td className="px-4 py-3">{a.doctor?.fullName || "Unassigned"}</td>
-                              <td className="px-4 py-3">{new Date(a.appointmentAt).toLocaleDateString()}</td>
+                              <td className="px-4 py-3 text-xs">
+                                <div>{new Date(a.appointmentAt).toLocaleDateString()}</div>
+                                <div className="text-[#626a62]">{new Date(a.appointmentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                              </td>
                               <td className="px-4 py-3">
-                                <span className="text-xs px-2 py-0.5 rounded bg-[#eef3eb] text-[#4b5f43] font-semibold">
+                                <span className={`text-xs px-2 py-0.5 rounded font-semibold ${
+                                  a.status === "COMPLETED" ? "bg-green-100 text-green-800" :
+                                  a.status === "CANCELLED" ? "bg-red-100 text-red-800" :
+                                  a.status === "IN_CONSULTATION" ? "bg-blue-100 text-blue-800" :
+                                  "bg-[#eef3eb] text-[#4b5f43]"
+                                }`}>
                                   {a.status}
                                 </span>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="flex gap-1.5">
+                                  {a.status !== "COMPLETED" && a.status !== "CANCELLED" && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingAppointment(a);
+                                        setEditApptForm({
+                                          doctorId: a.doctor?.id || "",
+                                          appointmentAt: new Date(a.appointmentAt).toISOString().slice(0, 16),
+                                          status: a.status,
+                                          notes: a.notes || "",
+                                        });
+                                      }}
+                                      className="text-[10px] px-2 py-1 border border-[#cfd6ca] rounded font-semibold hover:bg-[#f3f5f0] transition"
+                                    >
+                                      Edit
+                                    </button>
+                                  )}
+                                  {a.status === "SCHEDULED" && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUpdateAppointmentStatus(a.id, "CANCELLED")}
+                                      className="text-[10px] px-2 py-1 border border-red-200 bg-red-50 text-red-600 rounded font-semibold hover:bg-red-100 transition"
+                                    >
+                                      Cancel
+                                    </button>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
                     </div>
+
+                    {/* Pagination */}
+                    <div className="flex items-center justify-between pt-4 border-t border-[#dfe4d9] mt-4">
+                      <div className="text-xs text-[#626a62]">
+                        Page <span className="font-semibold text-[#20231f]">{appointmentPagination.page}</span> of{" "}
+                        <span className="font-semibold text-[#20231f]">{appointmentPagination.totalPages}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setAppointmentPage(p => Math.max(p - 1, 1))}
+                          disabled={appointmentPage <= 1}
+                          className="h-8 px-3 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                        >
+                          Previous
+                        </button>
+                        <button
+                          onClick={() => setAppointmentPage(p => Math.min(p + 1, appointmentPagination.totalPages))}
+                          disabled={appointmentPage >= appointmentPagination.totalPages}
+                          className="h-8 px-3 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                    </>
                   )}
                 </Surface>
               </div>
@@ -1822,8 +2673,14 @@ export default function EmployeePage() {
                   <button
                     type="submit"
                     disabled={isSavingAppointment}
-                    className="w-full h-10 px-4 rounded-md text-sm font-semibold text-white bg-[#2f5d50] hover:bg-[#24483e] transition disabled:opacity-60"
+                    className="w-full h-10 px-4 rounded-md text-sm font-semibold text-white bg-[#2f5d50] hover:bg-[#24483e] transition disabled:opacity-60 flex items-center justify-center gap-2"
                   >
+                    {isSavingAppointment && (
+                      <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                    )}
                     {isSavingAppointment ? "Scheduling..." : "Schedule Appointment"}
                   </button>
 
@@ -1839,6 +2696,81 @@ export default function EmployeePage() {
                   )}
                 </form>
               </Surface>
+
+              {/* Edit Appointment Modal */}
+              {editingAppointment && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+                  <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-lg font-bold text-[#151917]">Edit Appointment: {editingAppointment.appointmentNo}</h3>
+                      <button type="button" onClick={() => setEditingAppointment(null)} className="text-[#626a62] hover:text-red-500 text-xl font-bold">✕</button>
+                    </div>
+                    <p className="text-xs text-[#626a62]">
+                      Patient: <span className="font-semibold">{[editingAppointment.patient.firstName, editingAppointment.patient.lastName].filter(Boolean).join(" ")}</span>
+                    </p>
+                    <form onSubmit={handleUpdateAppointment} className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-semibold">Doctor</label>
+                        <select
+                          value={editApptForm.doctorId}
+                          onChange={(e) => setEditApptForm({ ...editApptForm, doctorId: e.target.value })}
+                          className="mt-1 block w-full h-10 px-3 border border-[#cfd6ca] rounded-md text-sm bg-white"
+                        >
+                          <option value="">Unassigned</option>
+                          {doctorsList.map((doc) => (
+                            <option key={doc.id} value={doc.id}>{doc.fullName} ({doc.department || "No Dept"})</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold">Date & Time</label>
+                        <input
+                          type="datetime-local"
+                          value={editApptForm.appointmentAt}
+                          onChange={(e) => setEditApptForm({ ...editApptForm, appointmentAt: e.target.value })}
+                          className="mt-1 block w-full h-10 px-3 border border-[#cfd6ca] rounded-md text-sm bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold">Status</label>
+                        <select
+                          value={editApptForm.status}
+                          onChange={(e) => setEditApptForm({ ...editApptForm, status: e.target.value })}
+                          className="mt-1 block w-full h-10 px-3 border border-[#cfd6ca] rounded-md text-sm bg-white"
+                        >
+                          {["SCHEDULED", "CHECKED_IN", "IN_CONSULTATION", "COMPLETED", "CANCELLED"].map((s) => (
+                            <option key={s} value={s}>{s}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold">Notes</label>
+                        <textarea
+                          value={editApptForm.notes}
+                          onChange={(e) => setEditApptForm({ ...editApptForm, notes: e.target.value })}
+                          className="mt-1 block w-full h-16 px-3 py-2 border border-[#cfd6ca] rounded-md text-sm bg-white"
+                          placeholder="Consultation notes"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={isSavingEditAppt}
+                        className="w-full h-10 px-4 rounded-md text-sm font-semibold text-white bg-[#2f5d50] hover:bg-[#24483e] transition disabled:opacity-60 flex items-center justify-center gap-2"
+                      >
+                        {isSavingEditAppt && (
+                          <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                        )}
+                        {isSavingEditAppt ? "Updating..." : "Update Appointment"}
+                      </button>
+                      {editApptMsg && <div className="rounded bg-[#eef8f1] p-3 text-xs text-[#27603a] font-semibold">{editApptMsg}</div>}
+                      {editApptErr && <div className="rounded bg-[#fff0ef] p-3 text-xs text-[#9f2d24] font-semibold">{editApptErr}</div>}
+                    </form>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1908,6 +2840,124 @@ export default function EmployeePage() {
               employees={employeesList}
               onOpenPatient={handleOpenPatientProfile}
             />
+          </div>
+        )}
+
+        {/* Tab 7: Operational Reports */}
+        {activeTab === "reports" && enabledModules.includes("REPORTS") && (
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-2xl font-bold text-[#151917]">Operational Logs & Reports</h2>
+              <p className="text-sm text-[#626a62] mt-1">
+                View hospital activity logs, audits, and real-time registry statistics.
+              </p>
+            </div>
+
+            {/* Stats Summary cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-white border border-[#dfe4d9] rounded-xl p-4 shadow-sm flex flex-col justify-between">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-[#626a62]">Total Patients</p>
+                  <h3 className="text-2xl font-black text-[#2f5d50] mt-1">{patientPagination.total}</h3>
+                </div>
+                <p className="text-[10px] text-[#626a62] mt-2">Registered in directory</p>
+              </div>
+
+              <div className="bg-white border border-[#dfe4d9] rounded-xl p-4 shadow-sm flex flex-col justify-between">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-[#626a62]">Appointments today</p>
+                  <h3 className="text-2xl font-black text-[#2f5d50] mt-1">{todayAppointments.length}</h3>
+                </div>
+                <p className="text-[10px] text-[#626a62] mt-2">Lined up in consultation queue</p>
+              </div>
+
+              <div className="bg-white border border-[#dfe4d9] rounded-xl p-4 shadow-sm flex flex-col justify-between">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-[#626a62]">Scheduled Books</p>
+                  <h3 className="text-2xl font-black text-[#2f5d50] mt-1">{appointmentPagination.total}</h3>
+                </div>
+                <p className="text-[10px] text-[#626a62] mt-2">All-time appointments booked</p>
+              </div>
+
+              <div className="bg-white border border-[#dfe4d9] rounded-xl p-4 shadow-sm flex flex-col justify-between">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-[#626a62]">Hospital Workspace</p>
+                  <h3 className="text-sm font-black text-[#2f5d50] mt-1 truncate">{hospitalName || "Medflow Facility"}</h3>
+                </div>
+                <p className="text-[10px] text-[#626a62] mt-2">Status: Active Subscription</p>
+              </div>
+            </div>
+
+            {/* Audit Logs list */}
+            <Surface title="Hospital Activity Logs & Audit Trail">
+              {isLoadingLogs ? (
+                <div className="flex flex-col items-center justify-center py-12 text-[#626a62] gap-3">
+                  <svg className="animate-spin h-8 w-8 text-[#2f5d50]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span className="text-xs font-semibold uppercase tracking-wider">Loading activity logs...</span>
+                </div>
+              ) : activityLogs.length === 0 ? (
+                <p className="text-center py-8 text-[#626a62] italic">No recent activity logs found.</p>
+              ) : (
+                <div className="space-y-4">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm border-collapse">
+                      <thead className="bg-[#f3f5f0] text-xs uppercase tracking-wider text-[#626a62]">
+                        <tr>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Event Title</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Details</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Category</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Date/Time</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {activityLogs.map((log) => (
+                          <tr key={log.id} className="border-b border-[#edf0e9] hover:bg-[#fcfdfc] transition text-xs">
+                            <td className="px-4 py-3 font-bold text-[#2f5d50]">{log.title}</td>
+                            <td className="px-4 py-3 text-[#20231f]">{log.details || "N/A"}</td>
+                            <td className="px-4 py-3">
+                              <span className="bg-[#eef3eb] text-[#4b5f43] px-2 py-0.5 rounded font-semibold text-[10px]">
+                                {log.category}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-[#626a62]">
+                              {new Date(log.createdAt).toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Pagination */}
+                  <div className="flex items-center justify-between pt-4 border-t border-[#dfe4d9]">
+                    <div className="text-xs text-[#626a62]">
+                      Showing Page <span className="font-semibold text-[#20231f]">{logsPagination.page}</span> of{" "}
+                      <span className="font-semibold text-[#20231f]">{logsPagination.totalPages}</span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setLogsPage(p => Math.max(p - 1, 1))}
+                        disabled={logsPage <= 1}
+                        className="h-8 px-3 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        onClick={() => setLogsPage(p => Math.min(p + 1, logsPagination.totalPages))}
+                        disabled={logsPage >= logsPagination.totalPages}
+                        className="h-8 px-3 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </Surface>
           </div>
         )}
       </section>
