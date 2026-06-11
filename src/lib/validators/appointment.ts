@@ -24,14 +24,14 @@ export const createAppointmentSchema =
     notes: optionalTrimmedString,
     vitals: z
       .object({
-        temperature: optionalTrimmedString,
+        temperature: z.string().trim().optional().nullable().transform((v) => v || undefined),
         pulse: z.coerce.number().int().optional().nullable(),
         respiratoryRate: z.coerce.number().int().optional().nullable(),
-        bloodPressure: optionalTrimmedString,
+        bloodPressure: z.string().trim().optional().nullable().transform((v) => v || undefined),
         oxygenSaturation: z.coerce.number().int().optional().nullable(),
-        height: optionalTrimmedString,
-        weight: optionalTrimmedString,
-        bmi: optionalTrimmedString,
+        height: z.string().trim().optional().nullable().transform((v) => v || undefined),
+        weight: z.string().trim().optional().nullable().transform((v) => v || undefined),
+        bmi: z.string().trim().optional().nullable().transform((v) => v || undefined),
       })
       .optional(),
   });
