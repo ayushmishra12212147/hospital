@@ -68,7 +68,7 @@ function getTenantSubdomain(): string | null {
     return null;
   }
 
-  // 3. Custom domain (e.g. apollo.medflow.com)
+  // 3. Custom domain (e.g. city-hospital.medflow.com)
   if (parts.length >= 3) {
     if (parts[0].toLowerCase() === "www") {
       return null;
@@ -382,7 +382,7 @@ export default function LoginPage() {
                       }
                     }}
                     className="block w-full h-11 rounded-md border border-[#cfd6ca] bg-white px-3 py-2 text-sm outline-none focus:border-[#477063] focus:ring-2 focus:ring-[#477063]/20 transition"
-                    placeholder="e.g. apollo-delhi"
+                    placeholder="e.g. city-hospital"
                   />
                   <span className="absolute right-3 top-3 text-xs text-[#a0a59e]">.medflow.com</span>
                 </div>

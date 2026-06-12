@@ -89,12 +89,53 @@ export async function GET(request: NextRequest) {
       return response;
     }
 
-    const hospitals =
-      await prisma.hospital.findMany({
-        orderBy: {
-          createdAt: "desc",
+    const search = request.nextUrl.searchParams.get("search") || "";
+    const pageStr = request.nextUrl.searchParams.get("page");
+    const limitStr = request.nextUrl.searchParams.get("limit");
+
+    const where = search
+      ? {
+          OR: [
+            { name: { contains: search, mode: "insensitive" as const } },
+            { subdomain: { contains: search, mode: "insensitive" as const } },
+          ],
+        }
+      : {};
+
+    if (pageStr && limitStr) {
+      const page = Number(pageStr) || 1;
+      const limit = Number(limitStr) || 10;
+      const skip = (page - 1) * limit;
+
+      const [hospitals, total] = await prisma.$transaction([
+        prisma.hospital.findMany({
+          where,
+          orderBy: {
+            createdAt: "desc",
+          },
+          skip,
+          take: limit,
+        }),
+        prisma.hospital.count({ where }),
+      ]);
+
+      return success({
+        hospitals,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.max(Math.ceil(total / limit), 1),
         },
       });
+    }
+
+    const hospitals = await prisma.hospital.findMany({
+      where,
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
 
     return success(hospitals);
 

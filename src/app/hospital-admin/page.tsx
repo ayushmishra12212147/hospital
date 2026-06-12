@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Surface } from "@/components/ui/surface";
+import { getCachedData, setCachedData } from "@/lib/client-cache";
 
 const getHospitalUrl = (subdomain: string) => {
   if (typeof window === "undefined") return "";
@@ -148,6 +149,35 @@ export default function HospitalAdminPage() {
   const [appointments, setAppointments] = useState<any[]>([]);
   const [isLoadingClinical, setIsLoadingClinical] = useState(false);
 
+  // Pagination & Search States for Employees, Logins, and Appointments
+  const [empSearch, setEmpSearch] = useState("");
+  const [debouncedEmpSearch, setDebouncedEmpSearch] = useState("");
+  const [empPage, setEmpPage] = useState(1);
+  const [empPagination, setEmpPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 1 });
+  const [allEmployeesForLookup, setAllEmployeesForLookup] = useState<UserAccount[]>([]);
+
+  const [apptSearch, setApptSearch] = useState("");
+  const [debouncedApptSearch, setDebouncedApptSearch] = useState("");
+  const [apptPage, setApptPage] = useState(1);
+  const [apptPagination, setApptPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 1 });
+
+  // Debounce effects
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedEmpSearch(empSearch);
+      setEmpPage(1);
+    }, 400);
+    return () => clearTimeout(handler);
+  }, [empSearch]);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedApptSearch(apptSearch);
+      setApptPage(1);
+    }, 400);
+    return () => clearTimeout(handler);
+  }, [apptSearch]);
+
   // Hospital settings state
   const [hospitalForm, setHospitalForm] = useState({ name: "", subdomain: "", logo: "", loginImage1: "", loginImage2: "", loginImage3: "" });
   const [isSavingSettings, setIsSavingSettings] = useState(false);
@@ -249,37 +279,58 @@ export default function HospitalAdminPage() {
   useEffect(() => {
     if (!token || !hospitalId) return;
 
-    // Fetch hospital name
-    fetch(`/api/hospitals/${hospitalId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success) {
-          setHospitalName(data.data.name);
-          setHospitalForm({
-            name: data.data.name,
-            subdomain: data.data.subdomain,
-            logo: data.data.logo || "",
-            loginImage1: data.data.loginImage1 || "",
-            loginImage2: data.data.loginImage2 || "",
-            loginImage3: data.data.loginImage3 || "",
-          });
-        }
+    // Fetch hospital name (caching applied)
+    const hospCacheKey = `hospital_details_${hospitalId}`;
+    const cachedHosp = getCachedData<any>(hospCacheKey);
+    if (cachedHosp) {
+      setHospitalName(cachedHosp.name);
+      setHospitalForm({
+        name: cachedHosp.name,
+        subdomain: cachedHosp.subdomain,
+        logo: cachedHosp.logo || "",
+        loginImage1: cachedHosp.loginImage1 || "",
+        loginImage2: cachedHosp.loginImage2 || "",
+        loginImage3: cachedHosp.loginImage3 || "",
       });
+    } else {
+      fetch(`/api/hospitals/${hospitalId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success) {
+            setHospitalName(data.data.name);
+            setHospitalForm({
+              name: data.data.name,
+              subdomain: data.data.subdomain,
+              logo: data.data.logo || "",
+              loginImage1: data.data.loginImage1 || "",
+              loginImage2: data.data.loginImage2 || "",
+              loginImage3: data.data.loginImage3 || "",
+            });
+            setCachedData(hospCacheKey, data.data);
+          }
+        });
+    }
 
-    // Fetch enabled modules
-    fetch(`/api/hospitals/${hospitalId}/modules`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success) {
-          setEnabledModules(
-            data.data.filter((item: any) => item.enabled).map((item: any) => item.module.code)
-          );
-        }
-      });
+    // Fetch enabled modules (caching applied)
+    const modulesCacheKey = `hospital_modules_${hospitalId}`;
+    const cachedModules = getCachedData<string[]>(modulesCacheKey);
+    if (cachedModules) {
+      setEnabledModules(cachedModules);
+    } else {
+      fetch(`/api/hospitals/${hospitalId}/modules`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success) {
+            const list = data.data.filter((item: any) => item.enabled).map((item: any) => item.module.code);
+            setEnabledModules(list);
+            setCachedData(modulesCacheKey, list);
+          }
+        });
+    }
   }, [token, hospitalId]);
 
   // Fetch Dashboard Stats
@@ -301,29 +352,67 @@ export default function HospitalAdminPage() {
     }
   }, [token, hospitalId]);
 
-  // Fetch Employees List
+  // Fetch Employees List (Paginated & Searched)
   const fetchEmployees = useCallback(async () => {
     if (!token || !hospitalId) return;
     setIsLoadingEmployees(true);
     try {
-      // In this setup, we list users which include employee profiles
-      const res = await fetch(`/api/users?hospitalId=${hospitalId}`, {
+      const params = new URLSearchParams({
+        hospitalId,
+        page: String(empPage),
+        limit: "10",
+        search: debouncedEmpSearch,
+      });
+      const res = await fetch(`/api/users?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (data.success) {
         setEmployees(data.data.users);
+        setEmpPagination(data.data.pagination);
       }
     } catch (err) {
       console.error(err);
     } finally {
       setIsLoadingEmployees(false);
     }
+  }, [token, hospitalId, empPage, debouncedEmpSearch]);
+
+  // Fetch all employees lookup without pagination (caching applied)
+  const fetchAllEmployeesLookup = useCallback(async (forceRefresh = false) => {
+    if (!token || !hospitalId) return;
+    const cacheKey = `employees_lookup_${hospitalId}`;
+    if (!forceRefresh) {
+      const cached = getCachedData<UserAccount[]>(cacheKey);
+      if (cached) {
+        setAllEmployeesForLookup(cached);
+        return;
+      }
+    }
+    try {
+      const res = await fetch(`/api/users?hospitalId=${hospitalId}&limit=1000`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAllEmployeesForLookup(data.data.users);
+        setCachedData(cacheKey, data.data.users);
+      }
+    } catch (err) {
+      console.error(err);
+    }
   }, [token, hospitalId]);
 
-  // Fetch Roles and Permissions
+  // Fetch Roles and Permissions (caching applied)
   const fetchRolesAndPermissions = useCallback(async () => {
     if (!token || !hospitalId) return;
+    const rolesCacheKey = `roles_permissions_${hospitalId}`;
+    const cachedRoles = getCachedData<any>(rolesCacheKey);
+    if (cachedRoles) {
+      setRoles(cachedRoles.roles);
+      setPermissions(cachedRoles.permissions);
+      return;
+    }
     try {
       const [rolesRes, permissionsRes] = await Promise.all([
         fetch(`/api/roles?hospitalId=${hospitalId}`, {
@@ -338,29 +427,39 @@ export default function HospitalAdminPage() {
 
       if (rolesData.success) setRoles(rolesData.data.roles);
       if (permissionsData.success) setPermissions(permissionsData.data);
+      if (rolesData.success && permissionsData.success) {
+        setCachedData(rolesCacheKey, { roles: rolesData.data.roles, permissions: permissionsData.data });
+      }
     } catch (err) {
       console.error(err);
     }
   }, [token, hospitalId]);
 
-  // Fetch Clinical Info (Appointments only)
+  // Fetch Clinical Info (Appointments only, Paginated & Searched)
   const fetchClinicalInfo = useCallback(async () => {
     if (!token || !hospitalId) return;
     setIsClinicalLoading(true);
     try {
-      const res = await fetch(`/api/appointments?hospitalId=${hospitalId}`, {
+      const params = new URLSearchParams({
+        hospitalId,
+        page: String(apptPage),
+        limit: "10",
+        search: debouncedApptSearch,
+      });
+      const res = await fetch(`/api/appointments?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json();
       if (data.success) {
         setAppointments(data.data.appointments);
+        setApptPagination(data.data.pagination);
       }
     } catch (err) {
       console.error(err);
     } finally {
       setIsClinicalLoading(false);
     }
-  }, [token, hospitalId]);
+  }, [token, hospitalId, apptPage, debouncedApptSearch]);
 
   const [isClinicalLoading, setIsClinicalLoading] = useState(false);
 
@@ -428,13 +527,29 @@ export default function HospitalAdminPage() {
       if (activeTab === "employees") fetchEmployees();
       if (activeTab === "user-accounts") {
         fetchEmployees();
+        fetchAllEmployeesLookup();
         fetchRolesAndPermissions();
       }
       if (activeTab === "roles") fetchRolesAndPermissions();
-      if (activeTab === "patients" || activeTab === "appointments") fetchClinicalInfo();
+      if (activeTab === "patients") fetchPatientsPaginated(patientSearch, patientPage);
+      if (activeTab === "appointments") fetchClinicalInfo();
       if (activeTab === "reports") fetchLogs();
     }
-  }, [activeTab, token, hospitalId, fetchStats, fetchEmployees, fetchRolesAndPermissions, fetchClinicalInfo, fetchLogs]);
+  }, [activeTab, token, hospitalId, fetchStats, fetchEmployees, fetchAllEmployeesLookup, fetchRolesAndPermissions, patientSearch, patientPage, fetchPatientsPaginated, fetchClinicalInfo, fetchLogs]);
+
+  // Sync effect to reload employees when search/page changes
+  useEffect(() => {
+    if (token && hospitalId && (activeTab === "employees" || activeTab === "user-accounts")) {
+      fetchEmployees();
+    }
+  }, [token, hospitalId, activeTab, debouncedEmpSearch, empPage, fetchEmployees]);
+
+  // Sync effect to reload appointments when search/page changes
+  useEffect(() => {
+    if (token && hospitalId && activeTab === "appointments") {
+      fetchClinicalInfo();
+    }
+  }, [token, hospitalId, activeTab, debouncedApptSearch, apptPage, fetchClinicalInfo]);
 
   // Handle Tab Switch
   const handleTabChange = (tab: string) => {
@@ -747,10 +862,10 @@ export default function HospitalAdminPage() {
   };
 
   // Filter employees showing pending login mapping
-  const pendingEmployees = employees.filter((emp) => emp.username.startsWith("pending_emp_"));
+  const pendingEmployees = allEmployeesForLookup.filter((emp) => emp.username.startsWith("pending_emp_"));
 
   return (
-    <main className="min-h-screen bg-[#f7f7f4] text-[#20231f] flex flex-col md:flex-row">
+    <main className="h-screen overflow-hidden bg-[#f7f7f4] text-[#20231f] flex flex-col md:flex-row">
       {/* Mobile Sidebar Backdrop */}
       {isMobileMenuOpen && (
         <div
@@ -784,10 +899,10 @@ export default function HospitalAdminPage() {
         <div>
           <div className="p-6 border-b border-[#dfe4d9] flex justify-between items-center">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#477063]">
-                Operations Portal
+              <h1 className="text-lg font-bold text-[#151917] truncate">{hospitalName || "Hospital Admin"}</h1>
+              <p className="text-xs text-[#626a62] mt-0.5">
+                Hospital Owner
               </p>
-              <h1 className="text-xl font-bold mt-1 text-[#151917] truncate">{hospitalName || "Hospital Admin"}</h1>
             </div>
             <button
               onClick={() => setIsMobileMenuOpen(false)}
@@ -829,7 +944,6 @@ export default function HospitalAdminPage() {
         <div className="p-4 border-t border-[#dfe4d9] flex flex-col gap-2">
           <div className="text-xs text-[#626a62] px-4">
             Logged in as <span className="font-semibold text-[#20231f]">{user?.username}</span>
-            <div className="text-[10px] mt-0.5 uppercase tracking-wider text-[#477063] font-bold">Hospital Owner</div>
           </div>
           <button
             onClick={handleLogout}
@@ -982,39 +1096,82 @@ export default function HospitalAdminPage() {
               </p>
             </div>
 
+            <div className="flex gap-4 items-center justify-between">
+              <input
+                type="text"
+                placeholder="Search appointments..."
+                value={apptSearch}
+                onChange={(e) => {
+                  setApptSearch(e.target.value);
+                  setApptPage(1);
+                }}
+                className="h-10 w-80 rounded-md border border-[#cfd6ca] bg-white px-3 text-sm outline-none focus:border-[#477063] focus:ring-2 focus:ring-[#477063]/20"
+              />
+              <div className="text-xs text-[#626a62] font-semibold bg-[#eef3eb] px-3 py-1.5 rounded-md border border-[#d2edd9] ml-auto">
+                Total Appointments: {apptPagination.total}
+              </div>
+            </div>
+
             <Surface title="Appointments List">
               {isClinicalLoading ? (
                 <div className="text-center py-8 text-[#626a62]">Loading queue...</div>
               ) : appointments.length === 0 ? (
                 <p className="text-center py-8 text-[#626a62]">No appointments scheduled.</p>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm border-collapse">
-                    <thead className="bg-[#f3f5f0] text-xs uppercase tracking-wider text-[#626a62]">
-                      <tr>
-                        <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">No</th>
-                        <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Patient</th>
-                        <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Doctor</th>
-                        <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Date</th>
-                        <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {appointments.map((a) => (
-                        <tr key={a.id} className="border-b border-[#edf0e9]">
-                          <td className="px-5 py-4 font-semibold text-[#2f5d50]">{a.appointmentNo}</td>
-                          <td className="px-5 py-4 font-medium">{[a.patient?.firstName, a.patient?.lastName].filter(Boolean).join(" ")}</td>
-                          <td className="px-5 py-4">{a.doctor?.fullName || "Unassigned"}</td>
-                          <td className="px-5 py-4">{new Date(a.appointmentAt).toLocaleDateString()}</td>
-                          <td className="px-5 py-4">
-                            <span className="text-xs px-2 py-0.5 rounded bg-[#eef3eb] text-[#4b5f43] font-semibold">
-                              {a.status}
-                            </span>
-                          </td>
+                <div className="space-y-4">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm border-collapse">
+                      <thead className="bg-[#f3f5f0] text-xs uppercase tracking-wider text-[#626a62]">
+                        <tr>
+                          <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">No</th>
+                          <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Patient</th>
+                          <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Doctor</th>
+                          <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Date</th>
+                          <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Status</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {appointments.map((a) => (
+                          <tr key={a.id} className="border-b border-[#edf0e9]">
+                            <td className="px-5 py-4 font-semibold text-[#2f5d50]">{a.appointmentNo}</td>
+                            <td className="px-5 py-4 font-medium">{[a.patient?.firstName, a.patient?.lastName].filter(Boolean).join(" ")}</td>
+                            <td className="px-5 py-4">{a.doctor?.fullName || "Unassigned"}</td>
+                            <td className="px-5 py-4">{new Date(a.appointmentAt).toLocaleDateString()}</td>
+                            <td className="px-5 py-4">
+                              <span className="text-xs px-2 py-0.5 rounded bg-[#eef3eb] text-[#4b5f43] font-semibold">
+                                {a.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Pagination Controls */}
+                  <div className="flex items-center justify-between pt-4 border-t border-[#dfe4d9] mt-4">
+                    <div className="text-xs text-[#626a62]">
+                      Showing Page <span className="font-semibold text-[#20231f]">{apptPagination.page}</span> of{" "}
+                      <span className="font-semibold text-[#20231f]">{apptPagination.totalPages}</span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setApptPage(p => Math.max(p - 1, 1))}
+                        disabled={apptPage <= 1}
+                        className="h-8 px-3 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        onClick={() => setApptPage(p => Math.min(p + 1, apptPagination.totalPages))}
+                        disabled={apptPage >= apptPagination.totalPages}
+                        className="h-8 px-3 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </Surface>
@@ -1106,37 +1263,75 @@ export default function HospitalAdminPage() {
 
               {/* List */}
               <Surface title="Hospital Staff Directory">
-                {isLoadingEmployees ? (
-                  <div className="text-center py-8 text-[#626a62]">Loading employees list...</div>
-                ) : employees.length === 0 ? (
-                  <p className="text-center py-8 text-[#626a62]">No staff registered.</p>
-                ) : (
-                  <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
-                    {employees.map((emp) => {
-                      const hasActiveLogin = !emp.username.startsWith("pending_emp_") && emp.isActive;
-                      return (
-                        <div key={emp.id} className="p-4 border border-[#d8ddd3] bg-[#fbfcfa] rounded-lg flex items-center justify-between">
-                          <div>
-                            <p className="font-semibold text-sm">{emp.employee?.fullName || emp.username}</p>
-                            <p className="text-xs text-[#626a62] mt-0.5">
-                              Code: {emp.employee?.employeeCode} / Designation: {emp.employee?.designation} / Dept: {emp.employee?.department || "N/A"}
-                            </p>
-                          </div>
+                <div className="space-y-4">
+                  <input
+                    type="text"
+                    placeholder="Search staff..."
+                    value={empSearch}
+                    onChange={(e) => setEmpSearch(e.target.value)}
+                    className="w-full h-10 px-3 border border-[#cfd6ca] rounded-md text-sm bg-white outline-none focus:border-[#477063] focus:ring-2 focus:ring-[#477063]/20"
+                  />
 
-                          <div className="text-right">
-                            <span className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full ${
-                              hasActiveLogin
-                                ? "bg-green-100 text-green-800 border border-green-200"
-                                : "bg-amber-100 text-amber-800 border border-amber-200"
-                            }`}>
-                              {hasActiveLogin ? "Login Active" : "No Login Credentials"}
-                            </span>
-                          </div>
+                  {isLoadingEmployees ? (
+                    <div className="text-center py-8 text-[#626a62]">Loading employees list...</div>
+                  ) : employees.length === 0 ? (
+                    <p className="text-center py-8 text-[#626a62]">No staff registered.</p>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
+                        {employees.map((emp) => {
+                          const hasActiveLogin = !emp.username.startsWith("pending_emp_") && emp.isActive;
+                          return (
+                            <div key={emp.id} className="p-4 border border-[#d8ddd3] bg-[#fbfcfa] rounded-lg flex items-center justify-between">
+                              <div>
+                                <p className="font-semibold text-sm">{emp.employee?.fullName || emp.username}</p>
+                                <p className="text-xs text-[#626a62] mt-0.5">
+                                  Code: {emp.employee?.employeeCode} / Designation: {emp.employee?.designation} / Dept: {emp.employee?.department || "N/A"}
+                                </p>
+                              </div>
+
+                              <div className="text-right">
+                                <span className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full ${
+                                  hasActiveLogin
+                                    ? "bg-green-100 text-green-800 border border-green-200"
+                                    : "bg-amber-100 text-amber-800 border border-amber-200"
+                                }`}>
+                                  {hasActiveLogin ? "Login Active" : "No Login Credentials"}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Pagination Controls */}
+                      <div className="flex items-center justify-between pt-4 border-t border-[#dfe4d9] mt-2">
+                        <div className="text-xs text-[#626a62]">
+                          Page <span className="font-semibold text-[#20231f]">{empPagination.page}</span> of{" "}
+                          <span className="font-semibold text-[#20231f]">{empPagination.totalPages}</span>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setEmpPage(p => Math.max(p - 1, 1))}
+                            disabled={empPage <= 1}
+                            className="h-8 px-2.5 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                          >
+                            Prev
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEmpPage(p => Math.min(p + 1, empPagination.totalPages))}
+                            disabled={empPage >= empPagination.totalPages}
+                            className="h-8 px-2.5 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </Surface>
             </div>
           </div>
@@ -1235,75 +1430,113 @@ export default function HospitalAdminPage() {
               </Surface>
 
               <Surface title="Manage Active Login Accounts" description="Update roles or deactivate login credentials for existing staff members.">
-                {employees.filter((emp) => !emp.username.startsWith("pending_emp_")).length === 0 ? (
-                  <p className="text-center py-8 text-xs text-[#626a62]">No active employee accounts configured yet.</p>
-                ) : (
-                  <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
-                    {employees
-                      .filter((emp) => !emp.username.startsWith("pending_emp_"))
-                      .map((emp) => {
-                        const currentRoleId = emp.roles[0]?.role?.id || "";
-                        return (
-                          <div key={emp.id} className="p-4 border border-[#d8ddd3] bg-[#fbfcfa] rounded-lg space-y-3 text-left">
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <p className="font-semibold text-sm">{emp.employee?.fullName || emp.username}</p>
-                                <p className="text-xs text-[#626a62] mt-0.5">
-                                  Username: <span className="font-semibold text-[#20231f]">{emp.username}</span> / Designation: {emp.employee?.designation || "N/A"}
-                                </p>
-                              </div>
-                              <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                                emp.isActive
-                                  ? "bg-green-100 text-green-800 border border-green-200"
-                                  : "bg-red-100 text-red-800 border border-red-200"
-                              }`}>
-                                {emp.isActive ? "Active" : "Disabled"}
-                              </span>
-                            </div>
+                <div className="space-y-4">
+                  <input
+                    type="text"
+                    placeholder="Search accounts..."
+                    value={empSearch}
+                    onChange={(e) => setEmpSearch(e.target.value)}
+                    className="w-full h-10 px-3 border border-[#cfd6ca] rounded-md text-sm bg-white outline-none focus:border-[#477063] focus:ring-2 focus:ring-[#477063]/20"
+                  />
 
-                            <div className="flex items-center justify-between gap-4 pt-2 border-t border-[#dfe4d9]">
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs text-[#626a62] font-medium">Role:</span>
-                                <select
-                                  value={currentRoleId}
-                                  onChange={(e) => handleUpdateUserRole(emp.id, e.target.value)}
-                                  className="text-xs h-8 px-2 border border-[#cfd6ca] rounded-md bg-white outline-none focus:border-[#477063] focus:ring-1 focus:ring-[#477063]/20 transition"
-                                >
-                                  <option value="">Select Role...</option>
-                                  {roles.map((r) => (
-                                    <option key={r.id} value={r.id}>
-                                      {r.name}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-
-                              <div className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => handleResetEmployeePassword(emp.id, emp.employee?.fullName || emp.username)}
-                                  className="text-xs font-semibold px-3 py-1.5 rounded bg-amber-50 text-amber-700 hover:bg-amber-100 transition"
-                                >
-                                  Reset Pass
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleToggleUserStatus(emp.id, emp.isActive)}
-                                  className={`text-xs font-semibold px-3 py-1.5 rounded transition ${
+                  {employees.filter((emp) => !emp.username.startsWith("pending_emp_")).length === 0 ? (
+                    <p className="text-center py-8 text-xs text-[#626a62]">No active employee accounts configured yet.</p>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2">
+                        {employees
+                          .filter((emp) => !emp.username.startsWith("pending_emp_"))
+                          .map((emp) => {
+                            const currentRoleId = emp.roles[0]?.role?.id || "";
+                            return (
+                              <div key={emp.id} className="p-4 border border-[#d8ddd3] bg-[#fbfcfa] rounded-lg space-y-3 text-left">
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <p className="font-semibold text-sm">{emp.employee?.fullName || emp.username}</p>
+                                    <p className="text-xs text-[#626a62] mt-0.5">
+                                      Username: <span className="font-semibold text-[#20231f]">{emp.username}</span> / Designation: {emp.employee?.designation || "N/A"}
+                                    </p>
+                                  </div>
+                                  <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
                                     emp.isActive
-                                      ? "bg-red-50 text-red-600 hover:bg-red-100"
-                                      : "bg-green-50 text-green-600 hover:bg-green-100"
-                                  }`}
-                                >
-                                  {emp.isActive ? "Deactivate" : "Activate"}
-                                </button>
+                                      ? "bg-green-100 text-green-800 border border-green-200"
+                                      : "bg-red-100 text-red-800 border border-red-200"
+                                  }`}>
+                                    {emp.isActive ? "Active" : "Disabled"}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center justify-between gap-4 pt-2 border-t border-[#dfe4d9]">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-[#626a62] font-medium">Role:</span>
+                                    <select
+                                      value={currentRoleId}
+                                      onChange={(e) => handleUpdateUserRole(emp.id, e.target.value)}
+                                      className="text-xs h-8 px-2 border border-[#cfd6ca] rounded-md bg-white outline-none focus:border-[#477063] focus:ring-1 focus:ring-[#477063]/20 transition"
+                                    >
+                                      <option value="">Select Role...</option>
+                                      {roles.map((r) => (
+                                        <option key={r.id} value={r.id}>
+                                          {r.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleResetEmployeePassword(emp.id, emp.employee?.fullName || emp.username)}
+                                      className="text-xs font-semibold px-3 py-1.5 rounded bg-amber-50 text-amber-700 hover:bg-amber-100 transition"
+                                    >
+                                      Reset Pass
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleUserStatus(emp.id, emp.isActive)}
+                                      className={`text-xs font-semibold px-3 py-1.5 rounded transition ${
+                                        emp.isActive
+                                          ? "bg-red-50 text-red-600 hover:bg-red-100"
+                                          : "bg-green-50 text-green-600 hover:bg-green-100"
+                                      }`}
+                                    >
+                                      {emp.isActive ? "Deactivate" : "Activate"}
+                                    </button>
+                                  </div>
+                                </div>
                               </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                  </div>
-                )}
+                            );
+                          })}
+                      </div>
+
+                      {/* Pagination Controls */}
+                      <div className="flex items-center justify-between pt-4 border-t border-[#dfe4d9] mt-2">
+                        <div className="text-xs text-[#626a62]">
+                          Page <span className="font-semibold text-[#20231f]">{empPagination.page}</span> of{" "}
+                          <span className="font-semibold text-[#20231f]">{empPagination.totalPages}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setEmpPage(p => Math.max(p - 1, 1))}
+                            disabled={empPage <= 1}
+                            className="h-8 px-2.5 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                          >
+                            Prev
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEmpPage(p => Math.min(p + 1, empPagination.totalPages))}
+                            disabled={empPage >= empPagination.totalPages}
+                            className="h-8 px-2.5 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </Surface>
             </div>
           </div>

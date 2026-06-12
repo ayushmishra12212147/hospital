@@ -8,6 +8,7 @@ import {
 } from "@/lib/api-response";
 import { getCurrentUserFromRequest } from "@/lib/current-user";
 import { updateOpdVisitSchema } from "@/lib/validators/opd";
+import { logErrorToDb } from "@/lib/error-logger";
 
 function resolveHospitalId(
   user: {
@@ -104,27 +105,30 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  let currentUser: any = null;
+  let hospitalId: string = "";
   try {
-    const currentUser =
+    currentUser =
       await getCurrentUserFromRequest(request);
 
     if (!currentUser) {
       return failure("Unauthorized", 401);
     }
 
-    const hospitalId = resolveHospitalId(
+    const resolvedHospId = resolveHospitalId(
       currentUser,
       request.nextUrl.searchParams.get(
         "hospitalId"
       ) ?? undefined
     );
 
-    if (!hospitalId) {
+    if (!resolvedHospId) {
       return failure(
         "Hospital is required",
         400
       );
     }
+    hospitalId = resolvedHospId;
 
     const { id } = await params;
     const body =
@@ -244,6 +248,16 @@ export async function PATCH(
     return success(visit);
   } catch (error) {
     console.error(error);
+
+    const errObj = error instanceof Error ? error : new Error(String(error));
+    await logErrorToDb({
+      hospitalId: typeof hospitalId !== "undefined" ? hospitalId : null,
+      userId: typeof currentUser !== "undefined" && currentUser ? currentUser.id : null,
+      endpoint: `/api/opd-visits/${(await params).id}`,
+      method: "PATCH",
+      message: errObj.message,
+      stack: errObj.stack,
+    });
 
     if (error instanceof ZodError) {
       return failure(

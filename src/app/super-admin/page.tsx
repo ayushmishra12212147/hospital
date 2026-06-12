@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Surface } from "@/components/ui/surface";
+import { getCachedData, setCachedData } from "@/lib/client-cache";
 
 type Hospital = {
   id: string;
@@ -130,15 +131,29 @@ export default function SuperAdminPage() {
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [isLoadingAllUsers, setIsLoadingAllUsers] = useState(false);
   const [userSearch, setUserSearch] = useState("");
+  const [debouncedUserSearch, setDebouncedUserSearch] = useState("");
+  const [userPage, setUserPage] = useState(1);
+  const [userPagination, setUserPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 1 });
+  const [userFilterHospitalId, setUserFilterHospitalId] = useState("");
 
   // Audit Logs tab state
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [activityLogs, setActivityLogs] = useState<any[]>([]);
-  const [logSubTab, setLogSubTab] = useState<"audit" | "activity">("audit");
+  const [errorLogs, setErrorLogs] = useState<any[]>([]);
+  const [errorSearch, setErrorSearch] = useState("");
+  const [debouncedErrorSearch, setDebouncedErrorSearch] = useState("");
+  const [logSubTab, setLogSubTab] = useState<"audit" | "activity" | "error">("audit");
   const [logFilterHospitalId, setLogFilterHospitalId] = useState("");
   const [logPage, setLogPage] = useState(1);
   const [logPagination, setLogPagination] = useState<any>({ page: 1, limit: 20, total: 0, totalPages: 1 });
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+
+  // Hospital lookup and search state
+  const [allHospitalsForLookup, setAllHospitalsForLookup] = useState<Hospital[]>([]);
+  const [hospSearch, setHospSearch] = useState("");
+  const [debouncedHospSearch, setDebouncedHospSearch] = useState("");
+  const [hospPage, setHospPage] = useState(1);
+  const [hospPagination, setHospPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 1 });
 
   // Super Admin Password Change States
   const [ownPassword, setOwnPassword] = useState("");
@@ -291,26 +306,91 @@ export default function SuperAdminPage() {
     }
   }, []);
 
-  // Fetch Hospitals list
-  const fetchHospitals = useCallback(async (authToken: string) => {
-    setIsLoadingHospitals(true);
+  // Debounce effects
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedHospSearch(hospSearch);
+      setHospPage(1);
+    }, 400);
+    return () => clearTimeout(handler);
+  }, [hospSearch]);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedUserSearch(userSearch);
+      setUserPage(1);
+    }, 400);
+    return () => clearTimeout(handler);
+  }, [userSearch]);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedErrorSearch(errorSearch);
+      setLogPage(1);
+    }, 400);
+    return () => clearTimeout(handler);
+  }, [errorSearch]);
+
+  // Fetch all hospitals without pagination for select boxes (caching applied)
+  const fetchAllHospitalsLookup = useCallback(async (authToken: string, forceRefresh = false) => {
+    const cacheKey = "super_admin_hospitals_lookup";
+    if (!forceRefresh) {
+      const cached = getCachedData<Hospital[]>(cacheKey);
+      if (cached) {
+        setAllHospitalsForLookup(cached);
+        return;
+      }
+    }
     try {
       const res = await fetch("/api/hospitals", {
         headers: { Authorization: `Bearer ${authToken}` },
       });
       const data = await res.json();
+      if (data.success && Array.isArray(data.data)) {
+        setAllHospitalsForLookup(data.data);
+        setCachedData(cacheKey, data.data);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }, []);
+
+  // Fetch Hospitals list (Paginated & Searched)
+  const fetchHospitals = useCallback(async (authToken: string) => {
+    setIsLoadingHospitals(true);
+    try {
+      const params = new URLSearchParams({
+        page: String(hospPage),
+        limit: "10",
+        search: debouncedHospSearch,
+      });
+      const res = await fetch(`/api/hospitals?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const data = await res.json();
       if (data.success) {
-        setHospitals(data.data);
+        if (data.data && data.data.hospitals) {
+          setHospitals(data.data.hospitals);
+          setHospPagination(data.data.pagination);
+        } else if (Array.isArray(data.data)) {
+          setHospitals(data.data);
+        }
       }
     } catch (err) {
       console.error(err);
     } finally {
       setIsLoadingHospitals(false);
     }
-  }, []);
+  }, [hospPage, debouncedHospSearch]);
 
-  // Fetch Modules catalog
+  // Fetch Modules catalog (Cached)
   const fetchModuleCatalog = useCallback(async (authToken: string) => {
+    const cacheKey = "module_catalog";
+    const cached = getCachedData<Module[]>(cacheKey);
+    if (cached) {
+      setModuleCatalog(cached);
+      return;
+    }
     try {
       const res = await fetch("/api/modules", {
         headers: { Authorization: `Bearer ${authToken}` },
@@ -318,57 +398,78 @@ export default function SuperAdminPage() {
       const data = await res.json();
       if (data.success) {
         setModuleCatalog(data.data);
+        setCachedData(cacheKey, data.data);
       }
     } catch (err) {
       console.error(err);
     }
   }, []);
 
-  // Fetch all users across the platform
+  // Fetch all users across the platform (Paginated & Searched)
   const fetchAllUsers = useCallback(async (authToken: string, hId?: string) => {
     setIsLoadingAllUsers(true);
     try {
-      // In the database model, fetching users requires a hospital ID.
-      // So we will map over all hospitals or load users for selectedHospital.
-      // For general "Users" tab, let's fetch for the selected hospital or first active hospital.
-      const targetHospital = hId || selectedHospital?.id || (hospitals[0]?.id);
+      const targetHospital = hId || userFilterHospitalId || selectedHospital?.id || (allHospitalsForLookup[0]?.id);
       if (!targetHospital) {
         setAllUsers([]);
+        setIsLoadingAllUsers(false);
         return;
       }
-      const res = await fetch(`/api/users?hospitalId=${targetHospital}`, {
+      const params = new URLSearchParams({
+        hospitalId: targetHospital,
+        page: String(userPage),
+        limit: "10",
+        search: debouncedUserSearch,
+      });
+      const res = await fetch(`/api/users?${params.toString()}`, {
         headers: { Authorization: `Bearer ${authToken}` },
       });
       const data = await res.json();
       if (data.success) {
         setAllUsers(data.data.users);
+        setUserPagination(data.data.pagination);
       }
     } catch (err) {
       console.error(err);
     } finally {
       setIsLoadingAllUsers(false);
     }
-  }, [hospitals, selectedHospital]);
+  }, [userFilterHospitalId, selectedHospital, allHospitalsForLookup, userPage, debouncedUserSearch]);
 
   // Load Initial Data
   useEffect(() => {
     if (token) {
       fetchStats(token);
       fetchHospitals(token);
+      fetchAllHospitalsLookup(token);
       fetchModuleCatalog(token);
     }
-  }, [token, fetchStats, fetchHospitals, fetchModuleCatalog]);
+  }, [token, fetchStats, fetchHospitals, fetchAllHospitalsLookup, fetchModuleCatalog]);
 
-  // Handle Tab Switch
-  // Fetch Audit/Activity Logs
-  const fetchLogs = useCallback(async (authToken: string, subTab: "audit" | "activity" = "audit", hospId = "", pageNum = 1) => {
+  // Sync effect for Hospitals tab
+  useEffect(() => {
+    if (token && activeTab === "hospitals") {
+      fetchHospitals(token);
+    }
+  }, [token, activeTab, fetchHospitals]);
+
+  // Sync effect for Users tab
+  useEffect(() => {
+    if (token && activeTab === "users") {
+      fetchAllUsers(token);
+    }
+  }, [token, activeTab, fetchAllUsers]);
+
+  // Fetch Audit/Activity/Error Logs
+  const fetchLogs = useCallback(async (authToken: string, subTab: "audit" | "activity" | "error" = "audit", hospId = "", pageNum = 1) => {
     setIsLoadingLogs(true);
     try {
-      const endpoint = subTab === "audit" ? "/api/audit-logs" : "/api/activity-logs";
+      const endpoint = subTab === "audit" ? "/api/audit-logs" : subTab === "activity" ? "/api/activity-logs" : "/api/error-logs";
       const params = new URLSearchParams({
         page: String(pageNum),
         limit: "20",
         ...(hospId ? { hospitalId: hospId } : {}),
+        ...(subTab === "error" && debouncedErrorSearch ? { search: debouncedErrorSearch } : {}),
       });
       const res = await fetch(`${endpoint}?${params.toString()}`, {
         headers: { Authorization: `Bearer ${authToken}` },
@@ -377,8 +478,10 @@ export default function SuperAdminPage() {
       if (data.success) {
         if (subTab === "audit") {
           setAuditLogs(data.data.auditLogs);
-        } else {
+        } else if (subTab === "activity") {
           setActivityLogs(data.data.activityLogs);
+        } else {
+          setErrorLogs(data.data.errorLogs);
         }
         setLogPagination(data.data.pagination);
       }
@@ -387,14 +490,14 @@ export default function SuperAdminPage() {
     } finally {
       setIsLoadingLogs(false);
     }
-  }, []);
+  }, [debouncedErrorSearch]);
 
   // Sync effect to reload logs when filters change
   useEffect(() => {
     if (token && activeTab === "logs") {
-      fetchLogs(token, logSubTab, logFilterHospitalId, logPage);
+      fetchLogs(token, logSubTab as any, logFilterHospitalId, logPage);
     }
-  }, [token, activeTab, logSubTab, logFilterHospitalId, logPage, fetchLogs]);
+  }, [token, activeTab, logSubTab, logFilterHospitalId, logPage, debouncedErrorSearch, fetchLogs]);
 
   const handleTabChange = (tab: string) => {
     setActiveTab(tab);
@@ -715,7 +818,7 @@ export default function SuperAdminPage() {
   });
 
   return (
-    <main className="min-h-screen bg-[#f7f7f4] text-[#20231f] flex flex-col md:flex-row">
+    <main className="h-screen overflow-hidden bg-[#f7f7f4] text-[#20231f] flex flex-col md:flex-row">
       {/* Mobile Sidebar Backdrop */}
       {isMobileMenuOpen && (
         <div
@@ -749,10 +852,10 @@ export default function SuperAdminPage() {
         <div>
           <div className="p-6 border-b border-[#dfe4d9] flex justify-between items-center">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#477063]">
-                MedFlow SaaS
+              <h1 className="text-lg font-bold text-[#151917]">MedFlow SaaS</h1>
+              <p className="text-xs text-[#626a62] mt-0.5">
+                Super Admin
               </p>
-              <h1 className="text-xl font-bold mt-1 text-[#151917]">Super Admin</h1>
             </div>
             <button
               onClick={() => setIsMobileMenuOpen(false)}
@@ -926,47 +1029,75 @@ export default function SuperAdminPage() {
                 <input
                   type="text"
                   placeholder="Search hospitals..."
-                  value={hospitalSearch}
-                  onChange={(e) => setHospitalSearch(e.target.value)}
+                  value={hospSearch}
+                  onChange={(e) => setHospSearch(e.target.value)}
                   className="w-full h-10 px-3 border border-[#cfd6ca] rounded-md text-sm bg-white outline-none focus:border-[#477063] focus:ring-2 focus:ring-[#477063]/20"
                 />
 
                 {isLoadingHospitals ? (
                   <div className="text-center py-8 text-[#626a62]">Loading hospitals list...</div>
-                ) : filteredHospitals.length === 0 ? (
+                ) : hospitals.length === 0 ? (
                   <div className="text-center py-8 text-[#626a62]">No hospitals found.</div>
                 ) : (
-                  <div className="space-y-2 max-h-[500px] overflow-y-auto">
-                    {filteredHospitals.map((h) => (
-                      <button
-                        key={h.id}
-                        onClick={() => handleOpenHospitalDetails(h)}
-                        className={`w-full text-left p-4 rounded-lg border transition ${
-                          selectedHospital?.id === h.id
-                            ? "bg-[#eef3eb] border-[#477063]"
-                            : "bg-white border-[#d8ddd3] hover:bg-[#f3f5f0]"
-                        }`}
-                      >
-                        <p className="font-semibold text-sm">{h.name}</p>
-                        <div className="flex items-center justify-between mt-2">
-                          <span className="text-xs text-[#626a62]">
-                            Subdomain:{" "}
-                            <a
-                              href={getHospitalUrl(h.subdomain)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-[#2f5d50] hover:underline font-semibold"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {h.subdomain}.medflow.com
-                            </a>
-                          </span>
-                          <span className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded ${h.status ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
-                            {h.status ? "Active" : "Disabled"}
-                          </span>
-                        </div>
-                      </button>
-                    ))}
+                  <div className="space-y-2">
+                    <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+                      {hospitals.map((h) => (
+                        <button
+                          key={h.id}
+                          onClick={() => handleOpenHospitalDetails(h)}
+                          className={`w-full text-left p-4 rounded-lg border transition ${
+                            selectedHospital?.id === h.id
+                              ? "bg-[#eef3eb] border-[#477063]"
+                              : "bg-white border-[#d8ddd3] hover:bg-[#f3f5f0]"
+                          }`}
+                        >
+                          <p className="font-semibold text-sm">{h.name}</p>
+                          <div className="flex items-center justify-between mt-2">
+                            <span className="text-xs text-[#626a62]">
+                              Subdomain:{" "}
+                              <a
+                                href={getHospitalUrl(h.subdomain)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[#2f5d50] hover:underline font-semibold"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {h.subdomain}.medflow.com
+                              </a>
+                            </span>
+                            <span className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded ${h.status ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>
+                              {h.status ? "Active" : "Disabled"}
+                            </span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Pagination Controls */}
+                    <div className="flex items-center justify-between pt-4 border-t border-[#dfe4d9] mt-4">
+                      <div className="text-xs text-[#626a62]">
+                        Page <span className="font-semibold text-[#20231f]">{hospPagination.page}</span> of{" "}
+                        <span className="font-semibold text-[#20231f]">{hospPagination.totalPages}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setHospPage(p => Math.max(p - 1, 1))}
+                          disabled={hospPage <= 1}
+                          className="h-8 px-2.5 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                        >
+                          Prev
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setHospPage(p => Math.min(p + 1, hospPagination.totalPages))}
+                          disabled={hospPage >= hospPagination.totalPages}
+                          className="h-8 px-2.5 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -987,7 +1118,7 @@ export default function SuperAdminPage() {
                           value={hospitalForm.name}
                           onChange={(e) => setHospitalForm({ ...hospitalForm, name: e.target.value })}
                           className="mt-2 block w-full h-10 px-3 border border-[#cfd6ca] rounded-md text-sm outline-none focus:border-[#477063] focus:ring-2 focus:ring-[#477063]/20 bg-white"
-                          placeholder="e.g. Apollo Hospital Delhi"
+                          placeholder="e.g. City General Hospital"
                         />
                       </div>
 
@@ -1000,7 +1131,7 @@ export default function SuperAdminPage() {
                           value={hospitalForm.subdomain}
                           onChange={(e) => setHospitalForm({ ...hospitalForm, subdomain: e.target.value })}
                           className="mt-2 block w-full h-10 px-3 border border-[#cfd6ca] rounded-md text-sm outline-none focus:border-[#477063] focus:ring-2 focus:ring-[#477063]/20 bg-white disabled:bg-[#f3f5f0] disabled:cursor-not-allowed"
-                          placeholder="e.g. apollo-delhi"
+                          placeholder="e.g. city-hospital"
                         />
                       </div>
                     </div>
@@ -1109,7 +1240,7 @@ export default function SuperAdminPage() {
                     {/* Module assignment */}
                     <Surface
                       title="SaaS Module Assignment"
-                      description="Toggle which product features are enabled for Apollo Hospital Delhi. Disabled modules cannot be accessed."
+                      description={`Toggle which product features are enabled for ${selectedHospital.name}. Disabled modules cannot be accessed.`}
                     >
                       {isLoadingStats ? (
                         <div className="text-center py-4 text-[#626a62]">Loading catalog...</div>
@@ -1178,7 +1309,7 @@ export default function SuperAdminPage() {
                               value={adminForm.username}
                               onChange={(e) => setAdminForm({ ...adminForm, username: e.target.value })}
                               className="mt-2 block w-full h-10 px-3 border border-[#cfd6ca] rounded-md text-sm bg-white"
-                              placeholder="e.g. apolloadmin"
+                              placeholder="e.g. admin"
                             />
                           </div>
                           <div>
@@ -1279,7 +1410,7 @@ export default function SuperAdminPage() {
                   className="h-10 min-w-64 rounded-md border border-[#cfd6ca] bg-white px-3 text-sm outline-none focus:border-[#477063] focus:ring-2 focus:ring-[#477063]/20"
                 >
                   <option value="">All Hospitals</option>
-                  {hospitals.map((h) => (
+                  {allHospitalsForLookup.map((h) => (
                     <option key={h.id} value={h.id}>
                       {h.name}
                     </option>
@@ -1391,13 +1522,15 @@ export default function SuperAdminPage() {
 
             <div className="flex gap-4 items-center">
               <select
+                value={userFilterHospitalId}
                 onChange={(e) => {
-                  if (token) fetchAllUsers(token, e.target.value);
+                  setUserFilterHospitalId(e.target.value);
+                  setUserPage(1);
                 }}
-                className="h-10 min-w-64 rounded-md border border-[#cfd6ca] bg-white px-3 text-sm outline-none"
+                className="h-10 min-w-64 rounded-md border border-[#cfd6ca] bg-white px-3 text-sm outline-none focus:border-[#477063] focus:ring-2"
               >
                 <option value="">Select hospital filter</option>
-                {hospitals.map((h) => (
+                {allHospitalsForLookup.map((h) => (
                   <option key={h.id} value={h.id}>
                     {h.name}
                   </option>
@@ -1419,29 +1552,22 @@ export default function SuperAdminPage() {
               ) : allUsers.length === 0 ? (
                 <p className="text-center py-8 text-[#626a62]">Select a hospital filter to list user profiles.</p>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm border-collapse">
-                    <thead className="bg-[#f3f5f0] text-xs uppercase tracking-wider text-[#626a62]">
-                      <tr>
-                        <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Username</th>
-                        <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Hospital</th>
-                        <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Employee Code</th>
-                        <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Full Name</th>
-                        <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Designation</th>
-                        <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Status</th>
-                        <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {allUsers
-                        .filter((u) => {
-                          const q = userSearch.toLowerCase().trim();
-                          return (
-                            u.username.toLowerCase().includes(q) ||
-                            (u.employee?.fullName || "").toLowerCase().includes(q)
-                          );
-                        })
-                        .map((u) => (
+                <div className="space-y-4">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm border-collapse">
+                      <thead className="bg-[#f3f5f0] text-xs uppercase tracking-wider text-[#626a62]">
+                        <tr>
+                          <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Username</th>
+                          <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Hospital</th>
+                          <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Employee Code</th>
+                          <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Full Name</th>
+                          <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Designation</th>
+                          <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Status</th>
+                          <th className="px-5 py-3 font-semibold border-b border-[#dfe4d9]">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {allUsers.map((u) => (
                           <tr key={u.id} className="border-b border-[#edf0e9] hover:bg-[#fcfdfc] transition">
                             <td className="px-5 py-4 font-semibold text-[#2f5d50]">{u.username}</td>
                             <td className="px-5 py-4 font-medium">{u.hospital?.name ?? "SaaS Owner"}</td>
@@ -1473,8 +1599,35 @@ export default function SuperAdminPage() {
                             </td>
                           </tr>
                         ))}
-                    </tbody>
-                  </table>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Pagination Controls */}
+                  <div className="flex items-center justify-between pt-4 border-t border-[#dfe4d9] mt-4">
+                    <div className="text-xs text-[#626a62]">
+                      Page <span className="font-semibold text-[#20231f]">{userPagination.page}</span> of{" "}
+                      <span className="font-semibold text-[#20231f]">{userPagination.totalPages}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setUserPage(p => Math.max(p - 1, 1))}
+                        disabled={userPage <= 1}
+                        className="h-8 px-2.5 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setUserPage(p => Math.min(p + 1, userPagination.totalPages))}
+                        disabled={userPage >= userPagination.totalPages}
+                        className="h-8 px-2.5 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </Surface>
@@ -1514,9 +1667,29 @@ export default function SuperAdminPage() {
                 >
                   Activity Logs
                 </button>
+                <button
+                  onClick={() => { setLogSubTab("error"); setLogPage(1); }}
+                  className={`h-9 px-4 text-sm font-semibold rounded-md transition ${
+                    logSubTab === "error"
+                      ? "bg-[#2f5d50] text-white"
+                      : "bg-white text-[#626a62] border border-[#cfd6ca] hover:bg-[#f3f5f0]"
+                  }`}
+                >
+                  Error Logs
+                </button>
               </div>
 
               <div className="flex items-center gap-4">
+                {logSubTab === "error" && (
+                  <input
+                    type="text"
+                    placeholder="Search errors..."
+                    value={errorSearch}
+                    onChange={(e) => setErrorSearch(e.target.value)}
+                    className="h-9 w-48 rounded-md border border-[#cfd6ca] bg-white px-3 text-sm outline-none focus:border-[#477063] focus:ring-2"
+                  />
+                )}
+
                 <select
                   value={logFilterHospitalId}
                   onChange={(e) => {
@@ -1526,7 +1699,7 @@ export default function SuperAdminPage() {
                   className="h-9 min-w-64 rounded-md border border-[#cfd6ca] bg-white px-3 text-sm outline-none focus:border-[#477063] focus:ring-2 focus:ring-[#477063]/20"
                 >
                   <option value="">All Hospitals</option>
-                  {hospitals.map((h) => (
+                  {allHospitalsForLookup.map((h) => (
                     <option key={h.id} value={h.id}>
                       {h.name}
                     </option>
@@ -1539,10 +1712,10 @@ export default function SuperAdminPage() {
               </div>
             </div>
 
-            <Surface title={logSubTab === "audit" ? "System Audit Trail" : "Activity Feed"}>
+            <Surface title={logSubTab === "audit" ? "System Audit Trail" : logSubTab === "activity" ? "Activity Feed" : "System Error Logs"}>
               {isLoadingLogs ? (
                 <div className="text-center py-8 text-[#626a62]">Loading logs...</div>
-              ) : (logSubTab === "audit" ? auditLogs : activityLogs).length === 0 ? (
+              ) : (logSubTab === "audit" ? auditLogs : logSubTab === "activity" ? activityLogs : errorLogs).length === 0 ? (
                 <p className="text-center py-8 text-[#626a62]">No log entries found for the selected filters.</p>
               ) : logSubTab === "audit" ? (
                 <div className="space-y-4">
@@ -1561,7 +1734,7 @@ export default function SuperAdminPage() {
                       </thead>
                       <tbody>
                         {auditLogs.map((log) => {
-                          const logHospital = hospitals.find(h => h.id === log.hospitalId);
+                          const logHospital = allHospitalsForLookup.find(h => h.id === log.hospitalId);
                           return (
                             <tr key={log.id} className="border-b border-[#edf0e9] hover:bg-[#fcfdfc] transition">
                               <td className="px-4 py-3 text-xs text-[#626a62] whitespace-nowrap">
@@ -1584,7 +1757,7 @@ export default function SuperAdminPage() {
                     </table>
                   </div>
                 </div>
-              ) : (
+              ) : logSubTab === "activity" ? (
                 <div className="space-y-4">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm border-collapse">
@@ -1600,7 +1773,7 @@ export default function SuperAdminPage() {
                       </thead>
                       <tbody>
                         {activityLogs.map((log) => {
-                          const logHospital = hospitals.find(h => h.id === log.hospitalId);
+                          const logHospital = allHospitalsForLookup.find(h => h.id === log.hospitalId);
                           return (
                             <tr key={log.id} className="border-b border-[#edf0e9] hover:bg-[#fcfdfc] transition">
                               <td className="px-4 py-3 text-xs text-[#626a62] whitespace-nowrap">
@@ -1622,10 +1795,47 @@ export default function SuperAdminPage() {
                     </table>
                   </div>
                 </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm border-collapse">
+                      <thead className="bg-[#f3f5f0] text-xs uppercase tracking-wider text-[#626a62]">
+                        <tr>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Timestamp</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Method & Endpoint</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Error Message</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Hospital</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Stack Trace</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {errorLogs.map((log) => {
+                          const logHospital = allHospitalsForLookup.find(h => h.id === log.hospitalId);
+                          return (
+                            <tr key={log.id} className="border-b border-[#edf0e9] hover:bg-[#fcfdfc] transition text-xs">
+                              <td className="px-4 py-3 text-[#626a62] whitespace-nowrap">
+                                {new Date(log.createdAt).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" })}
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className="font-bold text-red-600 mr-1.5">{log.method}</span>
+                                <span className="font-mono bg-slate-100 px-1 py-0.5 rounded text-[11px]">{log.endpoint}</span>
+                              </td>
+                              <td className="px-4 py-3 font-semibold text-[#20231f]">{log.message}</td>
+                              <td className="px-4 py-3 text-[#626a62]">{logHospital?.name || "Platform"}</td>
+                              <td className="px-4 py-3 max-w-xs truncate text-[10px] text-[#626a62] font-mono cursor-pointer" title={log.stack || ""}>
+                                {log.stack ? log.stack.slice(0, 100) + "..." : "—"}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               )}
 
               {/* Pagination */}
-              {(logSubTab === "audit" ? auditLogs : activityLogs).length > 0 && (
+              {(logSubTab === "audit" ? auditLogs : logSubTab === "activity" ? activityLogs : errorLogs).length > 0 && (
                 <div className="flex items-center justify-between pt-4 mt-4 border-t border-[#dfe4d9]">
                   <div className="text-xs text-[#626a62]">
                     Page <span className="font-semibold text-[#20231f]">{logPagination.page}</span> of{" "}

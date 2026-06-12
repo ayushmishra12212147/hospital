@@ -6,6 +6,7 @@ import { Surface } from "@/components/ui/surface";
 import { BillingConsole } from "@/components/billing-console";
 import { LabConsole } from "@/components/lab-console";
 import { RadiologyConsole } from "@/components/radiology-console";
+import { getCachedData, setCachedData } from "@/lib/client-cache";
 
 type Patient = {
   id: string;
@@ -258,6 +259,7 @@ export default function EmployeePage() {
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const [logsPagination, setLogsPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 1 });
   const [logsPage, setLogsPage] = useState(1);
+  const [reportsSubTab, setReportsSubTab] = useState<"patients" | "opd" | "ipd">("patients");
   const [opdForm, setOpdForm] = useState(initialOpdForm);
   const [prescriptionRows, setPrescriptionRows] = useState<PrescriptionDraft[]>([blankPrescriptionRow]);
   const [isSavingOpd, setIsSavingOpd] = useState(false);
@@ -315,33 +317,47 @@ export default function EmployeePage() {
   useEffect(() => {
     if (!token || !hospitalId) return;
 
-    fetch(`/api/hospitals/${hospitalId}/modules`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success) {
-          setEnabledModules(
-            data.data.filter((item: any) => item.enabled).map((item: any) => item.module.code)
-          );
-        }
-      });
+    const cacheKey = `hospital_modules_${hospitalId}`;
+    const cachedModules = getCachedData<string[]>(cacheKey);
+    if (cachedModules) {
+      setEnabledModules(cachedModules);
+    } else {
+      fetch(`/api/hospitals/${hospitalId}/modules`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success) {
+            const list = data.data.filter((item: any) => item.enabled).map((item: any) => item.module.code);
+            setEnabledModules(list);
+            setCachedData(cacheKey, list);
+          }
+        });
+    }
   }, [token, hospitalId]);
 
   // Load hospital info
   useEffect(() => {
     if (!token || !hospitalId) return;
 
-    fetch(`/api/hospitals/${hospitalId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success) {
-          setHospitalName(data.data.name);
-          setHospitalLogo(data.data.logo || "");
-        }
-      });
+    const cacheKey = `hospital_details_${hospitalId}`;
+    const cachedHosp = getCachedData<any>(cacheKey);
+    if (cachedHosp) {
+      setHospitalName(cachedHosp.name);
+      setHospitalLogo(cachedHosp.logo || "");
+    } else {
+      fetch(`/api/hospitals/${hospitalId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success) {
+            setHospitalName(data.data.name);
+            setHospitalLogo(data.data.logo || "");
+            setCachedData(cacheKey, data.data);
+          }
+        });
+    }
   }, [token, hospitalId]);
 
   // Debouncing logic for patient search
@@ -389,6 +405,12 @@ export default function EmployeePage() {
   // Fetch employees list
   const fetchEmployees = useCallback(async () => {
     if (!token || !hospitalId) return;
+    const cacheKey = `employees_lookup_${hospitalId}`;
+    const cached = getCachedData<Employee[]>(cacheKey);
+    if (cached) {
+      setEmployeesList(cached);
+      return;
+    }
     try {
       const res = await fetch(`/api/employees?hospitalId=${hospitalId}&limit=100`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -396,6 +418,7 @@ export default function EmployeePage() {
       const data = await res.json();
       if (data.success) {
         setEmployeesList(data.data.employees);
+        setCachedData(cacheKey, data.data.employees);
       }
     } catch (err) {
       console.error(err);
@@ -1263,7 +1286,7 @@ export default function EmployeePage() {
   };
 
   return (
-    <main className="min-h-screen bg-[#f7f7f4] text-[#20231f] flex flex-col md:flex-row">
+    <main className="h-screen overflow-hidden bg-[#f7f7f4] text-[#20231f] flex flex-col md:flex-row">
       {/* Mobile Sidebar Backdrop */}
       {isMobileMenuOpen && (
         <div
@@ -1300,10 +1323,10 @@ export default function EmployeePage() {
         <div>
           <div className="p-6 border-b border-[#dfe4d9] flex justify-between items-center">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#477063]">
-                MedFlow Operations
+              <h1 className="text-lg font-bold text-[#151917] truncate">{hospitalName || "Medflow Facility"}</h1>
+              <p className="text-xs text-[#626a62] mt-0.5 capitalize">
+                {user?.employee?.designation || role.replace("_", " ")}
               </p>
-              <h1 className="text-lg font-bold mt-1 text-[#151917] capitalize">{role.replace("_", " ")} Desk</h1>
             </div>
             <button
               onClick={() => setIsMobileMenuOpen(false)}
@@ -1411,9 +1434,6 @@ export default function EmployeePage() {
         <div className="p-4 border-t border-[#dfe4d9] flex flex-col gap-2">
           <div className="text-xs text-[#626a62] px-4">
             Logged in as <span className="font-semibold text-[#20231f]">{user?.username}</span>
-            <div className="text-[10px] mt-0.5 uppercase tracking-wider text-[#477063] font-bold">
-              {user?.employee?.designation}
-            </div>
           </div>
           <button
             onClick={handleLogout}
@@ -1549,6 +1569,27 @@ export default function EmployeePage() {
                             value={opdForm.diagnosis}
                             onChange={(e) => setOpdForm({ ...opdForm, diagnosis: e.target.value })}
                             className="mt-2 block w-full h-16 px-3 py-2 border border-[#cfd6ca] rounded-md text-sm bg-white"
+                            placeholder="Primary diagnosis assessment..."
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-semibold">Clinical Notes</label>
+                          <textarea
+                            value={opdForm.clinicalNotes}
+                            onChange={(e) => setOpdForm({ ...opdForm, clinicalNotes: e.target.value })}
+                            className="mt-2 block w-full h-16 px-3 py-2 border border-[#cfd6ca] rounded-md text-sm bg-white"
+                            placeholder="Symptoms, findings, clinical notes..."
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-sm font-semibold">Treatment Plan</label>
+                          <textarea
+                            value={opdForm.treatmentPlan}
+                            onChange={(e) => setOpdForm({ ...opdForm, treatmentPlan: e.target.value })}
+                            className="mt-2 block w-full h-16 px-3 py-2 border border-[#cfd6ca] rounded-md text-sm bg-white"
+                            placeholder="Treatment plan, advice, diagnostic tests ordered..."
                           />
                         </div>
 
@@ -2888,76 +2929,182 @@ export default function EmployeePage() {
               </div>
             </div>
 
-            {/* Audit Logs list */}
-            <Surface title="Hospital Activity Logs & Audit Trail">
-              {isLoadingLogs ? (
-                <div className="flex flex-col items-center justify-center py-12 text-[#626a62] gap-3">
-                  <svg className="animate-spin h-8 w-8 text-[#2f5d50]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  <span className="text-xs font-semibold uppercase tracking-wider">Loading activity logs...</span>
+            {/* Sub-tab navigation */}
+            <div className="flex border-b border-[#dfe4d9] gap-4 mb-6">
+              {[
+                { id: "patients", label: "Patient Directory Stats" },
+                { id: "opd", label: "OPD Consultation Stats" },
+                { id: "ipd", label: "IPD Occupancy Stats (Simulated)" }
+              ].map((subTab) => (
+                <button
+                  key={subTab.id}
+                  onClick={() => setReportsSubTab(subTab.id as any)}
+                  className={`pb-2 text-sm font-semibold transition border-b-2 ${
+                    reportsSubTab === subTab.id
+                      ? "border-[#2f5d50] text-[#2f5d50]"
+                      : "border-transparent text-[#626a62] hover:text-[#20231f]"
+                  }`}
+                >
+                  {subTab.label}
+                </button>
+              ))}
+            </div>
+
+            {reportsSubTab === "patients" && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <Surface title="Patient Demographics Analysis">
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center border-b border-[#f3f5f0] pb-2 text-xs">
+                        <span className="text-[#626a62] font-semibold">Total Registered</span>
+                        <span className="font-bold text-[#20231f]">{patientPagination.total}</span>
+                      </div>
+                      <div className="flex justify-between items-center border-b border-[#f3f5f0] pb-2 text-xs">
+                        <span className="text-[#626a62] font-semibold">Male Patients (Simulated)</span>
+                        <span className="font-bold text-[#20231f]">{Math.round(patientPagination.total * 0.54)} (54%)</span>
+                      </div>
+                      <div className="flex justify-between items-center border-b border-[#f3f5f0] pb-2 text-xs">
+                        <span className="text-[#626a62] font-semibold">Female Patients (Simulated)</span>
+                        <span className="font-bold text-[#20231f]">{Math.round(patientPagination.total * 0.45)} (45%)</span>
+                      </div>
+                      <div className="flex justify-between items-center pb-2 text-xs">
+                        <span className="text-[#626a62] font-semibold">Other/Unspecified</span>
+                        <span className="font-bold text-[#20231f]">{Math.round(patientPagination.total * 0.01)} (1%)</span>
+                      </div>
+                    </div>
+                  </Surface>
+
+                  <Surface title="Recent Patient Registrations" description="Listing recently registered patients in the database.">
+                    <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                      {patients.slice(0, 5).map((p) => (
+                        <div key={p.id} className="p-3 border border-[#d8ddd3] bg-white rounded-lg flex items-center justify-between text-xs">
+                          <div>
+                            <p className="font-bold text-[#2f5d50]">{p.patientCode}</p>
+                            <p className="font-semibold text-[#20231f] mt-0.5">{[p.firstName, p.lastName].filter(Boolean).join(" ")}</p>
+                            <p className="text-[10px] text-[#626a62] mt-0.5">Phone: {p.phone || "N/A"} • Gender: {p.gender}</p>
+                          </div>
+                          <span className="text-[#626a62] text-[10px]">Active</span>
+                        </div>
+                      ))}
+                      {patients.length === 0 && (
+                        <p className="text-xs text-[#626a62] italic text-center py-4">No patient records available.</p>
+                      )}
+                    </div>
+                  </Surface>
                 </div>
-              ) : activityLogs.length === 0 ? (
-                <p className="text-center py-8 text-[#626a62] italic">No recent activity logs found.</p>
-              ) : (
-                <div className="space-y-4">
+              </div>
+            )}
+
+            {reportsSubTab === "opd" && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <Surface title="Today's OPD Queue Metrics">
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center border-b border-[#f3f5f0] pb-2 text-xs">
+                        <span className="text-[#626a62] font-semibold">Total Queue Load</span>
+                        <span className="font-bold text-[#20231f]">{todayAppointments.length}</span>
+                      </div>
+                      <div className="flex justify-between items-center border-b border-[#f3f5f0] pb-2 text-xs">
+                        <span className="text-[#626a62] font-semibold">Completed Consultations</span>
+                        <span className="font-bold text-green-700">{todayAppointments.filter(a => a.status === "COMPLETED").length}</span>
+                      </div>
+                      <div className="flex justify-between items-center border-b border-[#f3f5f0] pb-2 text-xs">
+                        <span className="text-[#626a62] font-semibold">Active in Consultation</span>
+                        <span className="font-bold text-blue-700">{todayAppointments.filter(a => a.status === "IN_CONSULTATION").length}</span>
+                      </div>
+                      <div className="flex justify-between items-center pb-2 text-xs">
+                        <span className="text-[#626a62] font-semibold">Waiting / Checked In</span>
+                        <span className="font-bold text-amber-700">{todayAppointments.filter(a => a.status === "CHECKED_IN" || a.status === "SCHEDULED").length}</span>
+                      </div>
+                    </div>
+                  </Surface>
+
+                  <Surface title="Consultation Stats By Doctor" description="Appointments breakdown per doctor on roster.">
+                    <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                      {doctorsList.map((doc) => {
+                        const count = todayAppointments.filter(a => a.doctor?.id === doc.id).length;
+                        const completed = todayAppointments.filter(a => a.doctor?.id === doc.id && a.status === "COMPLETED").length;
+                        return (
+                          <div key={doc.id} className="p-3 border border-[#d8ddd3] bg-white rounded-lg flex items-center justify-between text-xs">
+                            <div>
+                              <p className="font-bold text-[#20231f]">{doc.fullName}</p>
+                              <p className="text-[10px] text-[#626a62] mt-0.5">Dept: {doc.department || "General Medicine"}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-bold text-[#2f5d50]">{count} Appts</p>
+                              <p className="text-[10px] text-green-700 mt-0.5">{completed} Done</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {doctorsList.length === 0 && (
+                        <p className="text-xs text-[#626a62] italic text-center py-4">No doctors registered in the system.</p>
+                      )}
+                    </div>
+                  </Surface>
+                </div>
+              </div>
+            )}
+
+            {reportsSubTab === "ipd" && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {[
+                    { label: "Total IPD Beds", val: 50, color: "text-[#2f5d50]" },
+                    { label: "Occupied Beds", val: 34, color: "text-amber-700" },
+                    { label: "Occupancy Rate", val: "68%", color: "text-blue-700" },
+                  ].map((card, idx) => (
+                    <div key={idx} className="bg-white border border-[#dfe4d9] rounded-xl p-4 shadow-sm">
+                      <p className="text-xs font-bold uppercase tracking-wider text-[#626a62]">{card.label}</p>
+                      <h3 className={`text-2xl font-black mt-1 ${card.color}`}>{card.val}</h3>
+                    </div>
+                  ))}
+                </div>
+
+                <Surface title="Simulated Active IPD Admitted Cases" description="Current active inpatients in ward.">
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm border-collapse">
+                    <table className="w-full text-left text-xs border-collapse">
                       <thead className="bg-[#f3f5f0] text-xs uppercase tracking-wider text-[#626a62]">
                         <tr>
-                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Event Title</th>
-                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Details</th>
-                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Category</th>
-                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Date/Time</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">IPD No</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Patient</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Ward/Bed</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Admission Date</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Admitting Doctor</th>
+                          <th className="px-4 py-3 font-semibold border-b border-[#dfe4d9]">Status</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {activityLogs.map((log) => (
-                          <tr key={log.id} className="border-b border-[#edf0e9] hover:bg-[#fcfdfc] transition text-xs">
-                            <td className="px-4 py-3 font-bold text-[#2f5d50]">{log.title}</td>
-                            <td className="px-4 py-3 text-[#20231f]">{log.details || "N/A"}</td>
+                        {[
+                          { ipdNo: "IPD-2026-001", name: "Aarav Mehta", bed: "Ward A - Bed 12", date: "2026-06-08", doctor: "Dr. Ramesh Patel", status: "ADMITTED" },
+                          { ipdNo: "IPD-2026-002", name: "Priya Sharma", bed: "Ward B - Bed 04", date: "2026-06-09", doctor: "Dr. Anjali Gupta", status: "ADMITTED" },
+                          { ipdNo: "IPD-2026-003", name: "Vikram Singh", bed: "ICU - Bed 02", date: "2026-06-10", doctor: "Dr. Rajesh Sharma", status: "CRITICAL" },
+                          { ipdNo: "IPD-2026-004", name: "Neha Verma", bed: "Ward A - Bed 09", date: "2026-06-11", doctor: "Dr. Ramesh Patel", status: "ADMITTED" },
+                          { ipdNo: "IPD-2026-005", name: "Kabir Roy", bed: "Ward C - Bed 15", date: "2026-06-11", doctor: "Dr. Anjali Gupta", status: "STABLE" }
+                        ].map((c, idx) => (
+                          <tr key={idx} className="border-b border-[#edf0e9] hover:bg-[#fcfdfc] transition">
+                            <td className="px-4 py-3 font-bold text-[#2f5d50]">{c.ipdNo}</td>
+                            <td className="px-4 py-3 font-semibold text-[#20231f]">{c.name}</td>
+                            <td className="px-4 py-3 font-mono">{c.bed}</td>
+                            <td className="px-4 py-3">{new Date(c.date).toLocaleDateString()}</td>
+                            <td className="px-4 py-3">{c.doctor}</td>
                             <td className="px-4 py-3">
-                              <span className="bg-[#eef3eb] text-[#4b5f43] px-2 py-0.5 rounded font-semibold text-[10px]">
-                                {log.category}
+                              <span className={`text-[10px] px-2 py-0.5 rounded font-bold ${
+                                c.status === "CRITICAL" ? "bg-red-100 text-red-800" :
+                                c.status === "STABLE" ? "bg-green-100 text-green-800" :
+                                "bg-blue-100 text-blue-800"
+                              }`}>
+                                {c.status}
                               </span>
-                            </td>
-                            <td className="px-4 py-3 text-xs text-[#626a62]">
-                              {new Date(log.createdAt).toLocaleString()}
                             </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-
-                  {/* Pagination */}
-                  <div className="flex items-center justify-between pt-4 border-t border-[#dfe4d9]">
-                    <div className="text-xs text-[#626a62]">
-                      Showing Page <span className="font-semibold text-[#20231f]">{logsPagination.page}</span> of{" "}
-                      <span className="font-semibold text-[#20231f]">{logsPagination.totalPages}</span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setLogsPage(p => Math.max(p - 1, 1))}
-                        disabled={logsPage <= 1}
-                        className="h-8 px-3 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
-                      >
-                        Previous
-                      </button>
-                      <button
-                        onClick={() => setLogsPage(p => Math.min(p + 1, logsPagination.totalPages))}
-                        disabled={logsPage >= logsPagination.totalPages}
-                        className="h-8 px-3 text-xs font-semibold border border-[#cfd6ca] rounded hover:bg-[#f3f5f0] disabled:opacity-40 disabled:cursor-not-allowed transition"
-                      >
-                        Next
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </Surface>
+                </Surface>
+              </div>
+            )}
           </div>
         )}
       </section>

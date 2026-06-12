@@ -11,6 +11,7 @@ import {
   appointmentListQuerySchema,
   createAppointmentSchema,
 } from "@/lib/validators/appointment";
+import { logErrorToDb } from "@/lib/error-logger";
 
 function nextAppointmentNo(
   lastAppointmentNo?: string
@@ -109,8 +110,10 @@ async function validateAppointmentRelations(
 export async function POST(
   request: NextRequest
 ) {
+  let currentUser: any = null;
+  let hospitalId: string = "";
   try {
-    const currentUser =
+    currentUser =
       await getCurrentUserFromRequest(request);
 
     if (!currentUser) {
@@ -122,17 +125,18 @@ export async function POST(
         await request.json()
       );
 
-    const hospitalId = resolveHospitalId(
+    const resolvedHospId = resolveHospitalId(
       currentUser,
       body.hospitalId
     );
 
-    if (!hospitalId) {
+    if (!resolvedHospId) {
       return failure(
         "Hospital is required",
         400
       );
     }
+    hospitalId = resolvedHospId;
 
     const relationError =
       await validateAppointmentRelations(
@@ -242,6 +246,16 @@ export async function POST(
     return success(appointment);
   } catch (error) {
     console.error(error);
+
+    const errObj = error instanceof Error ? error : new Error(String(error));
+    await logErrorToDb({
+      hospitalId: typeof hospitalId !== "undefined" ? hospitalId : null,
+      userId: typeof currentUser !== "undefined" && currentUser ? currentUser.id : null,
+      endpoint: "/api/appointments",
+      method: "POST",
+      message: errObj.message,
+      stack: errObj.stack,
+    });
 
     if (error instanceof ZodError) {
       return failure(
